@@ -1,0 +1,62 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+require 'pp'
+require "optimist"
+require "awesome_print"
+
+opts = Optimist::options do
+    opt :verbose, "Verbose", :short => :v
+    opt :file, "file name", :type => :string
+    opt :commit, "commit name", :type => :string
+    opt :number, "compare with nth-last", :type => :integer
+    opt :vimcommandopt, "return the vim fugitive Gdiff command options only"
+    opt :difftool, "which difftool to use: vimdiff/meld/...", :default => "vimdiff"
+    opt :ignore_space_change, "ignore space change when git diff", :default => false
+end
+
+#pp opts
+filename = opts[:file] || (abort "File name(--file) not given.")
+
+rev_from, rev_to = (ARGV.shift || '0..1').split('..').map{|n| n.to_i}
+rev_from = 1 if rev_from.nil?
+rev_to = rev_from + 1 if rev_to.nil?
+
+if opts[:ignore_space_change]
+    ignore_space_change = '--ignore-space-change'
+else
+    ignore_space_change = ''
+end
+revs=['uncommitted']
+msgs = ['']
+
+Dir.chdir File.dirname(filename)
+filename = File.basename filename
+#`git log --oneline -- #{filename} | head -n20`.split("\n").each_with_index do |log, index|
+#`git log --pretty=format:"%h%x09%an%x09%ad%x09%s" --date=iso -- #{filename} | head -n20 | column -s '	' -t`.split("\n").each_with_index do |log, index|
+`git log --pretty=format:"%h%x09%an%x09%ad%x09%s" --date=iso -- #{filename} | head -n20`.split("\n").each_with_index do |log, index|
+    rev, msg = log.split(/\s+/, 2)
+    revs[index + 1] = rev
+    msgs[index + 1] = msg
+    puts "(#{index+1})\t#{rev} #{msg}" unless opts[:vimcommandopt]
+end
+
+abort "Wrong revision #{rev_from}..#{rev_to}" if rev_from >= rev_to 
+rev_to = revs.length-1 if revs[rev_to].nil?
+
+if rev_from == 0
+    rev_range = "#{revs[rev_to]}"
+else
+    rev_range = "#{revs[rev_to]} #{revs[rev_from]}"
+end
+
+# cmd = "git df -w #{rev_range} -- #{filename}"
+cmd = "git df #{ignore_space_change} --tool=#{opts[:difftool]} #{rev_range} -- #{filename}"
+if opts[:vimcommandopt]
+    puts "#{rev_range}"
+    exit 
+end
+puts "left:\t(#{rev_to})\t#{revs[rev_to]} #{msgs[rev_to]}"
+puts "right:\t(#{rev_from})\t#{revs[rev_from]} #{msgs[rev_from]}"
+puts '> ' + cmd
+system cmd

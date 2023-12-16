@@ -1,0 +1,19 @@
+#!/usr/bin/env ruby
+
+if ARGV.delete('-w')
+    ignore_space = '-w'
+else
+    ignore_space = ''
+end
+
+# '--' in git is to separate command and file:
+commit = ARGV.shift || 'HEAD'
+if commit == '--'
+    ARGV.unshift
+    commit = 'HEAD'
+end
+
+cmd = "git difftool #{ignore_space} --no-prompt --extcmd icdiff #{commit}^ #{commit} | less -r"
+puts "> #{cmd}"
+system cmd
+

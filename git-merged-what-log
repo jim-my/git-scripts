@@ -1,0 +1,16 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+#
+# show(log) what has been merged into this commit, only useful for a merge commit:
+#  (useful) for a merge commit, it's show what changes have been introduced
+#  (useless) for a normal commit, it's just the commit itself
+#
+
+puts "This command shows(git logs) what has been merged into this commit, only useful for a merge commit:"
+
+verbose = ARGV.delete('-v') || ARGV.delete('--verbose')
+commit = ARGV.shift || 'HEAD'
+cmd = "git log --pretty=format:'%C(yellow)%h %Cred%ad %Cblue%an%Cgreen%d %Creset%s' --date=short #{commit}^1..#{commit}"
+puts '> ' + cmd if verbose
+system cmd
+

@@ -1,0 +1,15 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+if ARGV.length < 1
+    msg = "Usage: #{File.basename __FILE__} branch:file"
+    msg += "\n\ngit show file from BRANCH:FILE"
+    abort msg
+end
+
+branchfile = ARGV.shift
+filetype = branchfile.split('.').pop
+vim_tmpfolder = '~/.vim_runtime/temp_dirs'
+
+cmd = "git show #{branchfile} | gvim -c':w #{vim_tmpfolder + '/tmp-' + Time.new.to_i.to_s}.#{filetype}' -"
+system cmd

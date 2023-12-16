@@ -1,0 +1,20 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+#
+# show(diff) what has been merged into this commit, only useful for a merge commit:
+#  (useful) for a merge commit, it's show what changes have been introduced
+#  (useless) for a normal commit, it's just the commit itself
+
+
+verbose = ARGV.delete('-v') || ARGV.delete('--delete')
+use_vim = ARGV.delete('--vim')
+use_idea = ARGV.delete('--idea')
+
+commit = ARGV.shift || 'HEAD'
+
+cmd = "git diff -w #{commit}^1..#{commit}"
+cmd = "git diff-idea -w #{commit}^1..#{commit}" if use_idea
+cmd = "git difftool -w #{commit}^1..#{commit}" if use_vim
+
+puts '> ' + cmd if verbose
+system cmd

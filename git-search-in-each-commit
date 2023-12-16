@@ -1,0 +1,61 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+#
+# Send last 300 commits changes to individual file in /tmp/git, so then I can just use grep to find particular
+# changes easily.
+#
+# Usage:
+# E.g.
+# # less twig files changes one by one with color:
+# ag 'diff.*twig' -l | xargs -I{} cdiff {} | less # find all files which contains 'twig', when color-diff(using less -R) them one by one
+#
+
+require 'shellwords'
+require "optimist"
+require "awesome_print"
+require 'date'
+
+NAME = File.basename $0
+
+today = Date.today
+opts = Optimist::options do
+    opt :verbose, "Verbose", :short => :v             # flag    --verbose, default false
+    opt :file, "File name", :type => :string, :default => '-'
+    opt :max_commits, "max commits to search", :type => :int   # string  --name <s>, default nil
+    # opt :profile, "profile name", :type => :string
+    opt :from, "date from", :type => :string
+    opt :to, "date to", :type => :string
+    opt :date_back, "date back(days)", :type => :int, :default => 7
+    opt :keyword, "Until keyword found", :type => :string
+end
+
+# if opts[:profile]
+#     profile = "#{Dir.home}/.config/#{NAME}/#{opts[:profile]}"
+#     profile_content = File.read profile
+#     profile = Json.parse(profile_content)
+#     opts.merge! profile
+# end
+
+# If file not given, then all commits
+file = ARGV.shift
+MAX_COMMITS = 30000
+
+opts[:to] = opts[:to] || today
+opts[:from] = opts[:from] || (opts[:to] - opts[:date_back])
+
+`git log --all --after="#{opts[:from]} 00:00" --before="#{opts[:to]} 23:59" --pretty='format:%h,%cd' --date=format:'%Y.%m.%d_%H:%M:%S' #{file}`.strip.to_s.split("\n").each_with_index do |commit_with_date, index|
+    commit, date = commit_with_date.split(',')
+    cmd = "mkdir -p /tmp/git && git show #{commit} -- #{file} | tee /tmp/git/#{index}-#{commit}-#{date}"
+    cmd += " | grep #{opts[:keyword].shellescape}" if opts[:keyword]
+    puts cmd
+    ok = system cmd
+
+    break if ok && index >= MAX_COMMITS
+end
+
+puts "\nTime from:\t#{opts[:from]}\nTime to:\t#{opts[:to]}"
+# cmd = " xargs git -c color.ui=always show | grep #{pattern.shellescape}"
+# puts cmd
+# system cmd
+
+puts "Search /tmp/git/ for anything you want"

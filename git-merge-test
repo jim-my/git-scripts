@@ -1,0 +1,31 @@
+#!/usr/bin/env ruby
+
+REBASE = ARGV.delete('--rebase')
+OPTION_SPACE = (ARGV.delete('-w') ? '-X ignore-all-space' : '')
+
+def usage; 'Usage: git-merge-test [REPO] BRANCH'; end
+
+if ARGV.length == 2
+    repo = ARGV.shift
+    branch = ARGV.shift
+elsif ARGV.length == 1
+    repo = 'origin'
+    branch = ARGV.shift
+else
+    abort usage
+end
+
+cmds = []
+if REBASE
+    cmds << "git pull --rebase #{OPTION_SPACE} #{repo} #{branch} --no-commit --no-ff"
+    cmds << 'git rebase --abort'
+else
+    cmds << "git pull #{OPTION_SPACE} #{repo} #{branch} --no-commit --no-ff"
+    cmds << 'git merge --abort'
+end
+
+cmds.each do |cmd|
+    puts '> ' + cmd
+    system cmd
+end
+

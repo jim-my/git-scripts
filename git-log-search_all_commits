@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+echo git log -S $*
+
+# --source:     Print out the ref name given on the command line by which each commit was reached.
+# -p:           produce a patch file
+git log -S '$1' --source -p

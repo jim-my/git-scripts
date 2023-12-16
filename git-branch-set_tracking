@@ -1,0 +1,9 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+branch = ARGV.pop || abort("USAGE: #{File.basename(__FILE__)} [UPSTREAM_REPO] BRANCH")
+upstream = ARGV.pop || 'origin'
+
+cmd = "git branch --set-upstream-to=#{upstream}/#{branch}"
+puts '> ' + cmd
+system cmd

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+cat <<EOL
+Extra note: With modern Git (>= 1.6.6), you are able to use just
+
+> git checkout $1
+
+(note that it is 'test' not 'origin/test') to perform magical DWIM-mery and
+create local branch 'test' for you, for which upstream would be remote-tracking
+branch 'origin/test'.  "
+EOL
+
+cat << EOL
+Note: Run "git branch -r" to make sure origin/$1 exists
+
+Then "git fetch" to make sure origin/$1 is known to local
+
+> git checkout -b $1 origin/$1
+
+EOL
+git fetch origin $1
+git checkout -b $1 origin/$1
+
+

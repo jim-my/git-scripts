@@ -1,0 +1,33 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+# author: jimmy
+#
+require 'tempfile'
+require "awesome_print"
+ap ARGV
+oneline = ARGV.delete('--oneline') || ARGV.delete('--one-line') || ''
+oneline = '--oneline' if oneline
+gui = `echo $DISPLAY`.to_s.strip.empty? ? '' : '-g'
+gui = ''
+
+if ARGV.length < 1
+    puts <<EOS
+USAGE: 
+    #{File.basename __FILE__} BRANCH_1 [BRANCH_2] [--oneline|--one-line]
+Or simply run bash command:
+    vim #{gui} -d <(git log BRANCH_1 --oneline) <(git log BRANCH_2 --oneline)
+EOS
+    exit
+end
+
+branch1 = ARGV.shift
+branch2 = ARGV.shift || ''
+
+f = Tempfile.new('foo').path
+f1 = f + "1"
+f2 = f + "2"
+
+cmd = "git log #{branch1} #{oneline} -- > #{f1} && git log #{branch2} #{oneline} -- > #{f2} && vim #{gui} -d #{f1} #{f2}"
+puts '> ' + cmd
+system cmd
+

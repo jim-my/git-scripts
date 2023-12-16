@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# author: jimmy
+os=`uname`
+
+if [[ $os == 'Darwin' ]]; then
+    #cmd="mvim -d <(git log $1 --oneline) <(git log $2 --oneline)"
+    vim -d <(git log $1 --oneline) <(git log $2 --oneline)
+    # mvim -d <(git log $1 --oneline) <(git log $2 --oneline)
+else
+    #cmd="vim -g -d <(git log $1 --oneline) <(git log $2 --oneline)"
+    vim -g -d <(git log $1 --oneline) <(git log $2 --oneline)
+fi

@@ -1,0 +1,51 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+require 'tempfile'
+
+file = ARGV.shift
+unless file
+    puts("USAGE: #{File.basename __FILE__} FILE")
+    exit 0
+end
+
+
+if `uname`.strip.downcase == 'darwin'
+    # vim_cmd = 'mvim'
+    vim_cmd = 'vim'
+else
+    vim_cmd = 'vim -g'
+end
+
+file_dir, file = File.split file
+
+file_theirs = File.join(file_dir, 'tmp.theirs.'+file)
+file_ours = File.join(file_dir, 'tmp.ours.'+file)
+file = File.join(file_dir, file)
+
+#commonbase = `git show :1:#{file}`             # common base
+system "git show :3:#{file} > #{file_theirs}"   # theirs
+system "git show :2:#{file} > #{file_ours}"     # ours
+#system "cp #{file} #{file}.merged.tmp"              # merged
+
+cmd1 = "#{vim_cmd} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file}"
+cmd2 = "#{vim_cmd} -c 'set diffopt+=iwhite' -d #{file_ours} #{file}"
+cmd3 = "#{vim_cmd} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file_ours}"
+
+cmds = []
+cmds << cmd1
+cmds << cmd2
+cmds << cmd3
+
+puts cmds
+
+cmds.each do |cmd|
+    system cmd
+end
+
+# this is readonly, not good
+#
+cmd = "git difftool :2:#{file} :3:#{file}"
+puts "Or run this command(but these files will be readonly) - 1: current, 2: ours, 3: theirs"
+puts '> ' + cmd
+

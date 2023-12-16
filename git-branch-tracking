@@ -1,0 +1,7 @@
+#!/usr/bin/env ruby
+
+VERBOSE = ARGV.delete('-v') || ARGV.delete('--verbose')
+#echo '> git rev-parse --symbolic-full-name --abbrev-ref @{u}'
+cmd = 'git rev-parse --symbolic-full-name --abbrev-ref @{u}'
+puts '> ' + cmd if VERBOSE
+system cmd

@@ -1,0 +1,14 @@
+#!/usr/bin/env ruby
+
+if ARGV.delete('-w')
+    ignore_space = '-w'
+else
+    ignore_space = ''
+end
+
+commit = ARGV.shift || 'HEAD'
+
+cmd = "git difftool #{ignore_space} --no-prompt #{commit}^ #{commit}"
+puts "> #{cmd}"
+system cmd
+
