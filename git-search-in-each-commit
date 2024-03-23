@@ -45,7 +45,7 @@ opts[:from] = opts[:from] || (opts[:to] - opts[:date_back])
 
 `git log --all --after="#{opts[:from]} 00:00" --before="#{opts[:to]} 23:59" --pretty='format:%h,%cd' --date=format:'%Y.%m.%d_%H:%M:%S' #{file}`.strip.to_s.split("\n").each_with_index do |commit_with_date, index|
     commit, date = commit_with_date.split(',')
-    cmd = "mkdir -p /tmp/git && git show #{commit} -- #{file} | tee /tmp/git/#{index}-#{commit}-#{date}"
+    cmd = "mkdir -p /tmp/git && git show #{commit} -- #{file} | tee /tmp/git/#{'%05d' % index}-#{commit}-#{date}"
     cmd += " | grep #{opts[:keyword].shellescape}" if opts[:keyword]
     puts cmd
     ok = system cmd
