@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+from datetime import datetime
+
+# ANSI color codes
+RED = "\033[31m"
+GREEN = "\033[32m"
+BLUE = "\033[34m"
+YELLOW = "\033[33m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+# Disable colors if the output is not a terminal (e.g., when piped)
+if not sys.stdout.isatty():
+    RED = GREEN = BLUE = YELLOW = BOLD = RESET = ""
+
+
+def run_command(command):
+    """Run a shell command and return the output."""
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    return result.stdout.strip()
+
+
+def print_tracked_files():
+    """Print tracked files with their last commit date."""
+    print(f"\n{YELLOW}Changes not staged for commit:{RESET}")
+    modified_files = run_command(["git", "diff", "--name-only"]).splitlines()
+    for file in modified_files:
+        if file:
+            log_info = run_command([
+                "git",
+                "log",
+                "-1",
+                "--format=%ci %h %s",
+                "--",
+                file,
+            ])
+            print(
+                f"  {RED}modified:{RESET}   {file} {BLUE}(Last commit: {log_info}){RESET}"
+            )
+
+
+def print_staged_files():
+    """Print staged files with their last commit date."""
+    print(f"\n{GREEN}Changes to be committed:{RESET}")
+    staged_files = run_command(["git", "diff", "--cached", "--name-only"]).splitlines()
+    for file in staged_files:
+        if file:
+            log_info = run_command([
+                "git",
+                "log",
+                "-1",
+                "--format=%ci %h %s",
+                "--",
+                file,
+            ])
+            print(
+                f"  {GREEN}staged:{RESET}     {file} {BLUE}(Last commit: {log_info}){RESET}"
+            )
+
+
+def print_untracked_files():
+    """Print untracked files with their last modified time."""
+    print(f"\n{RED}Untracked files:{RESET}")
+    untracked_files = run_command([
+        "git",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+    ]).splitlines()
+    untracked_files_with_dates = []
+    for file in untracked_files:
+        if file:
+            try:
+                mtime = datetime.fromtimestamp(os.path.getmtime(file)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                untracked_files_with_dates.append((file, mtime))
+                # print(f"  {RED}untracked:{RESET}  {file} {BLUE}(Last modified: {mtime}){RESET}")
+            except FileNotFoundError:
+                print(
+                    f"  {RED}untracked:{RESET}  {file} {BLUE}(File missing or inaccessible){RESET}"
+                )
+
+    # Sort untracked files by last modified time(descending)
+    untracked_files_with_dates.sort(key=lambda x: x[1], reverse=True)
+    for file, mtime in untracked_files_with_dates:
+        print(f"  {RED}untracked:{RESET}  {file} {BLUE}(Last modified: {mtime}){RESET}")
+
+
+def main():
+    # Print standard git status
+    if False:
+        print(f"{BOLD}=== Git Status ==={RESET}")
+        git_status = run_command(["git", "status"])
+        print(git_status)
+
+    # Print additional categories with dates
+    print_tracked_files()
+    print_staged_files()
+    print_untracked_files()
+
+
+if __name__ == "__main__":
+    main()
