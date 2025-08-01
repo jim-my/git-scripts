@@ -1,0 +1,337 @@
+#!/usr/bin/env python3
+"""
+git-when-reached-branch: Comprehensive detection of when a commit reached a target branch
+
+Finds when a specific commit reached a target branch using multiple detection
+methods with clear confidence levels and documented limitations.
+
+Usage: git-when-reached-branch <commit> [target-branch]
+
+Detection methods (in order of preference):
+1. Merge commit detection - finds explicit merge commits (HIGH confidence)
+2. Direct integration detection - commit on first-parent path (MEDIUM confidence)
+3. Multi-level merge tracking - recursive merge chain following (HIGH confidence)
+
+Limitations:
+- Cannot distinguish between direct commits and fast-forward merges
+- Squash merges and cherry-picks change commit SHAs (original commit "never reached" target branch)
+- Assumes best practices: no history rewriting, no branch renames
+
+Author: Based on git-when-merged by Michael Haggerty, enhanced for comprehensive detection
+"""
+
+import sys
+import subprocess
+import argparse
+import re
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+from enum import Enum
+
+
+class ConfidenceLevel(Enum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM" 
+    LOW = "LOW"
+
+
+class DetectionMethod(Enum):
+    MERGE_COMMIT = "Merge commit detection"
+    DIRECT_INTEGRATION = "Direct integration"
+    MULTI_LEVEL_MERGE = "Multi-level merge chain"
+    NOT_FOUND = "Not found"
+
+
+@dataclass
+class DetectionResult:
+    method: DetectionMethod
+    confidence: ConfidenceLevel
+    commit_sha: str
+    commit_info: str
+    details: str
+    caveat: Optional[str] = None
+    merge_chain: Optional[List[str]] = None
+
+
+class GitCommandError(Exception):
+    """Raised when a git command fails"""
+    pass
+
+
+def run_git_command(cmd: List[str], check_returncode: bool = True) -> str:
+    """Run a git command and return output"""
+    try:
+        result = subprocess.run(
+            cmd, 
+            capture_output=True, 
+            text=True, 
+            check=check_returncode
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        if check_returncode:
+            raise GitCommandError(f"Git command failed: {' '.join(cmd)}\n{e.stderr}")
+        return ""
+
+
+def get_commit_info(commit_sha: str) -> str:
+    """Get formatted commit information"""
+    try:
+        return run_git_command([
+            'git', 'log', '-1', '--pretty=format:%h %ad %an %s', 
+            '--date=short', commit_sha
+        ])
+    except GitCommandError:
+        return f"{commit_sha[:8]} (commit info unavailable)"
+
+
+def resolve_commit_sha(commit_ref: str) -> str:
+    """Resolve commit reference to full SHA"""
+    try:
+        return run_git_command(['git', 'rev-parse', f'{commit_ref}^{{commit}}'])
+    except GitCommandError:
+        raise GitCommandError(f"'{commit_ref}' is not a valid commit")
+
+
+def is_ancestor_of(commit_sha: str, branch: str) -> bool:
+    """Check if commit is an ancestor of branch"""
+    cmd = ['git', 'merge-base', '--is-ancestor', commit_sha, branch]
+    result = run_git_command(cmd, check_returncode=False)
+    return subprocess.run(cmd, capture_output=True).returncode == 0
+
+
+def is_on_first_parent_path(commit_sha: str, branch: str) -> bool:
+    """Check if commit is on the first-parent path of branch"""
+    try:
+        first_parents = run_git_command([
+            'git', 'rev-list', '--first-parent', branch
+        ]).split('\n')
+        return commit_sha in first_parents
+    except GitCommandError:
+        return False
+
+
+def find_merge_commits(commit_sha: str, branch: str) -> List[str]:
+    """Find merge commits that brought commit into branch using ancestry-path method"""
+    try:
+        # Get commits on ancestry path
+        ancestry_commits = run_git_command([
+            'git', 'rev-list', '--ancestry-path', f'{commit_sha}..{branch}'
+        ]).split('\n')
+        
+        # Get commits on first-parent path  
+        first_parent_commits = run_git_command([
+            'git', 'rev-list', '--first-parent', f'{commit_sha}..{branch}'
+        ]).split('\n')
+        
+        # Find intersection (these are the merge commits)
+        merge_commits = [c for c in ancestry_commits if c in first_parent_commits and c]
+        return merge_commits
+        
+    except GitCommandError:
+        return []
+
+
+def find_multi_level_merges(commit_sha: str, branch: str) -> List[str]:
+    """Find multi-level merge chain recursively"""
+    merge_chain = []
+    current_commit = commit_sha
+    current_branch = branch
+    
+    while True:
+        merges = find_merge_commits(current_commit, current_branch)
+        if not merges:
+            break
+            
+        # Take the last merge (closest to target branch)
+        merge_commit = merges[-1]
+        merge_chain.append(merge_commit)
+        
+        # Check if this merge directly contains our original commit
+        try:
+            parents = run_git_command([
+                'git', 'rev-list', '--parents', '-n', '1', merge_commit
+            ]).split()[1:]  # Skip the commit itself, get parents
+            
+            if current_commit in parents:
+                # Direct merge found
+                break
+                
+            # Continue searching from this merge commit
+            current_commit = merge_commit
+            
+        except GitCommandError:
+            break
+    
+    return merge_chain
+
+
+def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> DetectionResult:
+    """Main detection logic with comprehensive methods"""
+    
+    # Resolve commit to full SHA
+    try:
+        commit_sha = resolve_commit_sha(commit_ref)
+        target_sha = resolve_commit_sha(target_branch)
+    except GitCommandError as e:
+        return DetectionResult(
+            method=DetectionMethod.NOT_FOUND,
+            confidence=ConfidenceLevel.HIGH,
+            commit_sha=commit_ref,
+            commit_info="Invalid commit or branch",
+            details=str(e)
+        )
+    
+    commit_info = get_commit_info(commit_sha)
+    
+    # Check if commit is even an ancestor of target branch
+    if not is_ancestor_of(commit_sha, target_branch):
+        return DetectionResult(
+            method=DetectionMethod.NOT_FOUND,
+            confidence=ConfidenceLevel.HIGH,
+            commit_sha=commit_sha,
+            commit_info=commit_info,
+            details=f"Commit is not an ancestor of {target_branch}",
+            caveat="Commit never reached target branch, or was squash merged/cherry-picked (original SHA lost)"
+        )
+    
+    # Method 1: Look for merge commits (highest confidence)
+    merge_commits = find_merge_commits(commit_sha, target_branch)
+    if merge_commits:
+        merge_info = get_commit_info(merge_commits[-1])  # Last merge is the final one
+        return DetectionResult(
+            method=DetectionMethod.MERGE_COMMIT,
+            confidence=ConfidenceLevel.HIGH,
+            commit_sha=merge_commits[-1],
+            commit_info=merge_info,
+            details=f"Found via explicit merge commit",
+            merge_chain=merge_commits if len(merge_commits) > 1 else None
+        )
+    
+    # Method 2: Check if on first-parent path (ambiguous case)
+    if is_on_first_parent_path(commit_sha, target_branch):
+        return DetectionResult(
+            method=DetectionMethod.DIRECT_INTEGRATION,
+            confidence=ConfidenceLevel.MEDIUM,
+            commit_sha=commit_sha,
+            commit_info=commit_info,
+            details="Commit is on first-parent path of target branch",
+            caveat="Cannot distinguish between direct commit and fast-forward merge (Git limitation)"
+        )
+    
+    # Method 3: Multi-level merge detection
+    multi_merges = find_multi_level_merges(commit_sha, target_branch)
+    if multi_merges:
+        merge_info = get_commit_info(multi_merges[-1])
+        return DetectionResult(
+            method=DetectionMethod.MULTI_LEVEL_MERGE,
+            confidence=ConfidenceLevel.HIGH,
+            commit_sha=multi_merges[-1],
+            commit_info=merge_info,
+            details="Found via multi-level merge chain",
+            merge_chain=multi_merges
+        )
+    
+    # Should not reach here under best practices
+    return DetectionResult(
+        method=DetectionMethod.NOT_FOUND,
+        confidence=ConfidenceLevel.HIGH,
+        commit_sha=commit_sha,
+        commit_info=commit_info,
+        details="Unexpected: commit is ancestor but no integration path found",
+        caveat="This may indicate history rewriting or other violations of best practices"
+    )
+
+
+def format_result(result: DetectionResult, target_branch: str) -> str:
+    """Format detection result for display"""
+    
+    if result.method == DetectionMethod.NOT_FOUND:
+        icon = "❌"
+        status = "NOT FOUND"
+    elif result.confidence == ConfidenceLevel.HIGH:
+        icon = "✅"
+        status = "FOUND"
+    else:
+        icon = "⚠️ "
+        status = "FOUND"
+    
+    output = [
+        f"{icon} {status}: {result.method.value}",
+        f"   Target: {result.commit_info}",
+        f"   Confidence: {result.confidence.value}",
+        f"   Details: {result.details}"
+    ]
+    
+    if result.merge_chain and len(result.merge_chain) > 1:
+        output.append(f"   Merge chain: {len(result.merge_chain)} levels")
+        for i, merge_sha in enumerate(result.merge_chain):
+            merge_info = get_commit_info(merge_sha)
+            output.append(f"     {i+1}. {merge_info}")
+    
+    if result.caveat:
+        output.append("")
+        output.append(f"   ⚠️  CAVEAT: {result.caveat}")
+    
+    if result.method == DetectionMethod.NOT_FOUND and "never reached" not in result.details:
+        output.append("")
+        output.append("   Possible reasons:")
+        output.append("   - Commit never reached target branch")
+        output.append("   - Squash merged (original SHA lost)")
+        output.append("   - Cherry-picked (new SHA created)")
+        output.append("   - History was rewritten (violates best practices)")
+    
+    return "\n".join(output)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument(
+        'commit',
+        help='The commit to track (SHA, branch name, tag, etc.)'
+    )
+    
+    parser.add_argument(
+        'target_branch',
+        nargs='?',
+        default='main',
+        help='Target branch to check (default: main)'
+    )
+    
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Show additional debugging information'
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        result = detect_when_reached_branch(args.commit, args.target_branch)
+        print(format_result(result, args.target_branch))
+        
+        if args.verbose:
+            print(f"\nDEBUG INFO:")
+            print(f"  Commit SHA: {result.commit_sha}")
+            print(f"  Detection method: {result.method.value}")
+            print(f"  Confidence: {result.confidence.value}")
+        
+        # Exit code based on confidence
+        if result.method == DetectionMethod.NOT_FOUND:
+            sys.exit(1)
+        elif result.confidence == ConfidenceLevel.MEDIUM:
+            sys.exit(2)  # Found but ambiguous
+        else:
+            sys.exit(0)  # Found with high confidence
+            
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(3)
+
+
+if __name__ == '__main__':
+    main()
