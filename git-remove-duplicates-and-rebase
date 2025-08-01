@@ -51,6 +51,8 @@ set -euo pipefail
 #   - Remove redundant commits after cherry-picking
 #   - Prepare clean pull requests with linear history
 #   - Fix branches with duplicate commits from rebasing mishaps
+#
+# AUTHOR: Jimmy Y
 # =============================================================================
 
 # Colors for output

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 # author: jimmy
 #   http://stackoverflow.com/questions/6245570/get-current-branch-name
-#   alternatively: 
+#   alternatively:
 git rev-parse --abbrev-ref HEAD

@@ -43,5 +43,3 @@ system cmd3
 cmd = "git difftool :2:#{file} :3:#{file}"
 puts "Or run this command(but these files will be readonly):"
 puts '> ' + cmd
-
-

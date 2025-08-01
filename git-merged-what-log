@@ -13,4 +13,3 @@ commit = ARGV.shift || 'HEAD'
 cmd = "git log --pretty=format:'%C(yellow)%h %Cred%ad %Cblue%an%Cgreen%d %Creset%s' --date=short #{commit}^1..#{commit}"
 puts '> ' + cmd if verbose
 system cmd
-

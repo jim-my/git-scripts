@@ -16,4 +16,3 @@ end
 cmd = "git difftool #{ignore_space} --no-prompt --extcmd icdiff #{commit}^ #{commit} | less -r"
 puts "> #{cmd}"
 system cmd
-

@@ -12,7 +12,7 @@ gui = ''
 
 if ARGV.length < 1
     puts <<EOS
-USAGE: 
+USAGE:
     #{File.basename __FILE__} BRANCH_1 [BRANCH_2] [--oneline|--one-line]
 Or simply run bash command:
     vim #{gui} -d <(git log BRANCH_1 --oneline) <(git log BRANCH_2 --oneline)
@@ -30,4 +30,3 @@ f2 = f + "2"
 cmd = "git log #{branch1} #{oneline} -- > #{f1} && git log #{branch2} #{oneline} -- > #{f2} && vim #{gui} -d #{f1} #{f2}"
 puts '> ' + cmd
 system cmd
-

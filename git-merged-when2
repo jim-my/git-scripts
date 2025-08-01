@@ -59,4 +59,3 @@ puts "\t" + cmd
 # Show found commit:
 puts "Merged at commit: " + `git log -n1 --pretty=format:"%h %ad %an %s" #{merged_at}`
 puts "me(given commit): " + `git log -n1 --pretty=format:"%h %ad %an %s" #{me}`
-

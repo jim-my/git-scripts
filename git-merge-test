@@ -28,4 +28,3 @@ cmds.each do |cmd|
     puts '> ' + cmd
     system cmd
 end
-

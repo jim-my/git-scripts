@@ -9,7 +9,7 @@ base_branch = ARGV.shift || abort(usage)
 branch_local = "#{repo}-#{branch.gsub('/', '_')}"
 
 repo_origin = `git config --get remote.origin.url`.strip
-repo_url = `git config --get remote.#{repo}.url` 
+repo_url = `git config --get remote.#{repo}.url`
 if repo_url.empty?
     puts "Repository #{repo} not found! Please add it using something like:\n\tgit remote add #{repo} #{repo_origin}"
     exit 1
@@ -18,8 +18,8 @@ end
 cmds = []
 if `git rev-parse --verify #{branch_local}`.to_s.length > 0
     puts "Existing branch:"
-    cmds << "git checkout #{branch_local}" 
-    cmds << "git pull #{repo} #{branch}" 
+    cmds << "git checkout #{branch_local}"
+    cmds << "git pull #{repo} #{branch}"
 
     cmd = cmds.join(' && ')
     puts '> ' + cmd
@@ -30,8 +30,8 @@ else
     puts '> ' + cmd
     system cmd || abort("Error: Failed to run #{cmd}")
 
-    cmd = "git checkout -b #{branch_local} #{repo}/#{branch}" 
-    # cmd = "git checkout -b #{branch_local}-pr#{pr_id}" 
+    cmd = "git checkout -b #{branch_local} #{repo}/#{branch}"
+    # cmd = "git checkout -b #{branch_local}-pr#{pr_id}"
     puts '> ' + cmd
     system(cmd) || abort("Error: Failed to run #{cmd}")
 end

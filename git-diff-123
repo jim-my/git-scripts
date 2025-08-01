@@ -48,4 +48,3 @@ end
 cmd = "git difftool :2:#{file} :3:#{file}"
 puts "Or run this command(but these files will be readonly) - 1: current, 2: ours, 3: theirs"
 puts '> ' + cmd
-

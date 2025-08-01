@@ -150,7 +150,7 @@ def show_commits commits, prefix="    "
   else
     max = $all_commits ? commits.size : $config["max_commits"]
     max -= 1 if max == commits.size - 1 # never show "and 1 more"
-    commits[0 ... max].each { |c| 
+    commits[0 ... max].each { |c|
         printf "#{prefix}%s\n", c
         commit = c.match(/\[([^\]]+)\]/)[1].remove_color
         if $show_filename
@@ -209,7 +209,7 @@ def show b
   end
 
   if b[:remote_branch]
-    puts "Remote branch: #{cyan b[:remote_branch]} (#{b[:remote_url]})"
+    puts "\nRemote branch: #{cyan b[:remote_branch]} (#{b[:remote_url]})"
 
     if have_both
       if pullc.empty?
@@ -384,6 +384,6 @@ end
 puts if modified || uncommitted
 puts "#{red "NOTE"}: working directory contains modified files." if modified
 puts "#{red "NOTE"}: staging area contains staged but uncommitted files." if uncommitted
-puts 
+puts
 
 # the end!

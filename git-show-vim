@@ -11,4 +11,3 @@ commit = ARGV.shift || 'HEAD'
 cmd = "git difftool #{ignore_space} --no-prompt #{commit}^ #{commit}"
 puts "> #{cmd}"
 system cmd
-

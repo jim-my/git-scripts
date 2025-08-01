@@ -41,7 +41,7 @@ filename = File.basename filename
     puts "(#{index+1})\t#{rev} #{msg}" unless opts[:vimcommandopt]
 end
 
-abort "Wrong revision #{rev_from}..#{rev_to}" if rev_from >= rev_to 
+abort "Wrong revision #{rev_from}..#{rev_to}" if rev_from >= rev_to
 rev_to = revs.length-1 if revs[rev_to].nil?
 
 if rev_from == 0
@@ -54,7 +54,7 @@ end
 cmd = "git df #{ignore_space_change} --tool=#{opts[:difftool]} #{rev_range} -- #{filename}"
 if opts[:vimcommandopt]
     puts "#{rev_range}"
-    exit 
+    exit
 end
 puts "left:\t(#{rev_to})\t#{revs[rev_to]} #{msgs[rev_to]}"
 puts "right:\t(#{rev_from})\t#{revs[rev_from]} #{msgs[rev_from]}"

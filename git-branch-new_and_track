@@ -20,5 +20,3 @@ Then "git fetch" to make sure origin/$1 is known to local
 EOL
 git fetch origin $1
 git checkout -b $1 origin/$1
-
-
