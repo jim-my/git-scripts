@@ -1,6 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# =============================================================================
+# git-remove-duplicates-and-rebase - Clean Branch History and Rebase
+# =============================================================================
+#
+# PURPOSE:
+#   Automatically removes duplicate commits and cleanly rebases your branch onto
+#   a target branch. Solves the common problem of redundant commits that occur
+#   during development workflows with cherry-picking, rebasing, and merging.
+#
+# WHAT ARE "DUPLICATE" COMMITS?
+#   - Commits with identical code changes but different hashes
+#   - Created when the same changes are applied multiple times through:
+#     * Cherry-picking commits that were later merged normally
+#     * Rebasing branches that already had some commits upstream
+#     * Manually re-applying changes that were already committed elsewhere
+#   - These create messy history with redundant commits
+#
+# HOW IT WORKS:
+#   1. Creates backup of your current branch
+#   2. Uses git-check-dup to detect duplicate commits
+#   3. Performs two-phase rebase:
+#      - Phase 1: Rebase onto remote branch (drops duplicates automatically)
+#      - Phase 2: Rebase cleaned commits onto target branch
+#   4. Shows before/after branch graphs for verification
+#
+# SAFETY FEATURES:
+#   - Dry-run by default (use --apply to actually run)
+#   - Always creates timestamped backup branch
+#   - Stops on any rebase conflicts for manual resolution
+#   - Shows exactly what duplicates will be removed
+#
+# USAGE:
+#   git-remove-duplicates-and-rebase [--onto <branch>] [--apply]
+#
+# EXAMPLES:
+#   git-remove-duplicates-and-rebase                    # Dry-run against origin/main
+#   git-remove-duplicates-and-rebase --apply            # Actually clean and rebase
+#   git-remove-duplicates-and-rebase --onto upstream/main --apply  # Rebase onto different branch
+#
+# WORKFLOW:
+#   1. Run without --apply first to see what will happen
+#   2. Review the duplicate detection and rebase plan
+#   3. Run with --apply to execute the cleanup
+#   4. If conflicts occur, resolve manually and continue rebase
+#
+# USE CASES:
+#   - Clean up messy feature branches before merging
+#   - Remove redundant commits after cherry-picking
+#   - Prepare clean pull requests with linear history
+#   - Fix branches with duplicate commits from rebasing mishaps
+# =============================================================================
+
 # Colors for output
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -15,9 +67,19 @@ apply=false
 usage() {
     echo "Usage: git-remove-duplicates-and-rebase [--onto <branch>] [--apply]"
     echo
+    echo "Remove duplicate commits and rebase branch cleanly."
+    echo
     echo "Options:"
     echo "  --onto <branch>  Rebase onto this branch (default: origin/main)"
     echo "  --apply          Actually perform deduplication and rebase"
+    echo "                   (default is dry-run mode)"
+    echo
+    echo "Examples:"
+    echo "  git-remove-duplicates-and-rebase                    # Show what would happen"
+    echo "  git-remove-duplicates-and-rebase --apply            # Actually clean and rebase"
+    echo "  git-remove-duplicates-and-rebase --onto upstream/main --apply"
+    echo
+    echo "Safety: Always creates backup branch before making changes."
     exit 1
 }
 

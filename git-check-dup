@@ -1,11 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple duplicate commit checker
-# Usage: git-check-dup [-q|--quiet] [remote_branch]
-# Output: 
-#   Default: header + commit details with dates and messages
-#   Quiet:   just "local_hash remote_hash patch_id" for pipes
+# =============================================================================
+# git-check-dup - Find Duplicate Commits Between Branches
+# =============================================================================
+#
+# PURPOSE:
+#   Detects commits with identical CONTENT (same patch-id) between your current
+#   branch and a remote branch. These are commits that make the exact same changes
+#   to the code but may have different commit hashes, timestamps, or authors.
+#
+# WHAT ARE "DUPLICATE" COMMITS?
+#   - Same code changes (additions, deletions, modifications)
+#   - Different commit hashes (due to different commit times/authors)
+#   - Often created by: cherry-picking, rebasing, manual re-application
+#   - NOT the same as commits with identical messages but different content
+#
+# HOW IT WORKS:
+#   1. Finds common ancestor between branches
+#   2. Collects all commits since that point from both branches  
+#   3. Computes patch-id for each commit (content fingerprint)
+#   4. Reports commits with matching patch-ids as duplicates
+#
+# USAGE:
+#   git-check-dup [--quiet|-q] [remote_branch]
+#
+# EXAMPLES:
+#   git-check-dup                           # Check against origin/main
+#   git-check-dup upstream/develop          # Check against specific branch
+#   git-check-dup --quiet origin/main       # Pipe-friendly output
+#   git-check-dup -q | wc -l               # Count duplicates
+#   git-check-dup -q | cut -d' ' -f1       # Get local commit hashes
+#
+# OUTPUT FORMATS:
+#   Default: Header + detailed commit info with dates and messages
+#   Quiet:   Just "local_hash remote_hash patch_id" for shell pipes
+#
+# USE CASES:
+#   - Before rebasing: Check if your commits already exist upstream
+#   - After cherry-picking: Verify which commits were successfully applied
+#   - Code review: Identify redundant commits in pull requests
+#   - Branch cleanup: Find commits that can be safely dropped
+# =============================================================================
 
 quiet=false
 remote_branch="origin/main"
