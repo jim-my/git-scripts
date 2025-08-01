@@ -190,3 +190,18 @@ which git-check-dup git-remove-duplicates-and-rebase
 ```
 
 Both tools integrate seamlessly with Git's subcommand system and can be called as `git check-dup` or `git remove-duplicates-and-rebase` as well.
+
+---
+
+## 🔗 Other Git Utilities
+
+This repository also contains additional Git utilities for various workflows:
+
+- **`git-when-reached-branch`** - Find when a commit reached a target branch (handles merges, fast-forwards, etc.)
+- **`git-experiment`** - Safe experimentation sandbox with isolated branches and easy cleanup
+- **`git-stash-smart`** - Enhanced stash management with descriptive names and keyword search
+- **`git-wtf`** - Git status with enhanced branch information
+- **`git-extract-folder`** - Extract folder history into new repository
+- **`git-split-amended-commit`** - Split accidentally merged commits
+
+Run any script with `--help` for detailed usage information.
