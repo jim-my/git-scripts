@@ -1,0 +1,441 @@
+#!/bin/bash
+
+# git-split-amended-commit: Split accidentally amended commits back into separate commits
+# 
+# This script handles the case where you accidentally used 'git commit --amend' 
+# and combined two commits into one. It can work with commits anywhere in history,
+# not just HEAD, and will preserve any commits that come after the merged commit
+# by rebasing them on top of the split commits.
+#
+# Key features:
+# - Works with commits in the middle of history (not just HEAD)
+# - Preserves later commits by automatically rebasing them
+# - Interactive mode to help identify commits
+# - Creates automatic backups
+# - Handles rebase conflicts gracefully
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-split-amended-commit - Split an accidentally amended commit back into two separate commits
+
+USAGE:
+    git split-amended-commit <merged-commit> <original-commit> [--help]
+    git split-amended-commit [--help]
+
+DESCRIPTION:
+    When you accidentally use 'git commit --amend' and combine two commits into one,
+    this script helps split them back apart by:
+    
+    1. Creating the original commit and remaining changes as separate commits
+    2. If there are commits after the merged commit, rebases them on top
+    3. Preserves all later commits in the history
+
+ARGUMENTS:
+    <merged-commit>     The accidentally merged commit (contains both commits' changes)
+    <original-commit>   One of the original commits that was merged (can be local or remote)
+
+OPTIONS:
+    --help             Show this help message
+
+EXAMPLES:
+    # Split HEAD commit, using a specific original commit
+    git split-amended-commit HEAD abc123f
+    
+    # Split a specific merged commit  
+    git split-amended-commit def456a abc123f
+    
+    # Interactive mode - script will help you identify commits
+    git split-amended-commit
+
+SCENARIOS:
+    # Simple case (merged commit is HEAD):
+    # Before: A -> B -> [merged:C+D] -> HEAD
+    # After:  A -> B -> C -> D -> HEAD
+    
+    # Complex case (commits after merged commit):
+    # Before: A -> B -> [merged:C+D] -> E -> F -> HEAD  
+    # After:  A -> B -> C -> D -> E' -> F' -> HEAD
+    # (E and F are rebased on top of the split commits)
+
+SAFETY:
+    - Creates backup branch before making changes
+    - Requires clean working directory
+    - Shows preview before making changes
+
+SEE ALSO:
+    git-remove-duplicates-and-rebase, git-check-dup
+EOF
+}
+
+# Initialize variables
+MERGED_COMMIT=""
+ORIGINAL_COMMIT=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option $1"
+            usage
+            exit 1
+            ;;
+        *)
+            if [[ -z "$MERGED_COMMIT" ]]; then
+                MERGED_COMMIT="$1"
+            elif [[ -z "$ORIGINAL_COMMIT" ]]; then
+                ORIGINAL_COMMIT="$1"
+            else
+                echo "Error: Too many arguments"
+                usage
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Interactive mode if no arguments provided
+if [[ -z "$MERGED_COMMIT" ]]; then
+    echo "Interactive mode: help identify commits to split"
+    echo
+    echo "Recent commits:"
+    git log --oneline -10
+    echo
+    read -p "Enter the merged commit (default: HEAD): " input
+    MERGED_COMMIT="${input:-HEAD}"
+fi
+
+if [[ -z "$ORIGINAL_COMMIT" ]]; then
+    if [[ -n "$MERGED_COMMIT" ]]; then
+        echo
+        echo "Finding potential original commits using branch differences..."
+        
+        # Show commits from branch differences that might be the original
+        POTENTIAL_COMMITS=()
+        
+        # Strategy 1: Check commits that differ from main/master branches
+        for main_branch in "main" "master" "origin/main" "origin/master"; do
+            if git rev-parse --verify "$main_branch" >/dev/null 2>&1; then
+                echo "Checking differences from $main_branch..."
+                while IFS= read -r commit; do
+                    if [[ "$commit" != "$(git rev-parse "$MERGED_COMMIT")" ]]; then
+                        POTENTIAL_COMMITS+=("$commit")
+                    fi
+                done < <(git log --format="%H" "$main_branch..HEAD" 2>/dev/null | head -10)
+                break  # Use first available main branch
+            fi
+        done
+        
+        # Strategy 2: If no main branch found, check recent commits on current branch
+        if [[ ${#POTENTIAL_COMMITS[@]} -eq 0 ]]; then
+            echo "No main branch found, checking recent commits on current branch..."
+            while IFS= read -r commit; do
+                if [[ "$commit" != "$(git rev-parse "$MERGED_COMMIT")" ]]; then
+                    POTENTIAL_COMMITS+=("$commit")
+                fi
+            done < <(git log --format="%H" -10)
+        fi
+        
+        # Strategy 3: Check commits from remote tracking branch differences
+        if git remote >/dev/null 2>&1; then
+            TRACKING_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "")
+            if [[ -n "$TRACKING_BRANCH" ]]; then
+                echo "Checking differences from tracking branch $TRACKING_BRANCH..."
+                while IFS= read -r remote_commit; do
+                    if [[ "$remote_commit" != "$(git rev-parse "$MERGED_COMMIT")" ]]; then
+                        POTENTIAL_COMMITS+=("$remote_commit")
+                    fi
+                done < <(git log --format="%H" "$TRACKING_BRANCH..HEAD" 2>/dev/null | head -5)
+            fi
+        fi
+        
+        # Remove duplicates and show options
+        UNIQUE_COMMITS=($(printf "%s\n" "${POTENTIAL_COMMITS[@]}" | sort -u))
+        
+        if [[ ${#UNIQUE_COMMITS[@]} -eq 0 ]]; then
+            echo "No potential original commits found from branch differences."
+            echo "You may need to specify the original commit manually."
+            read -p "Enter the original commit hash: " ORIGINAL_COMMIT
+        else
+            echo "Potential original commits (from branch differences):"
+            for i in "${!UNIQUE_COMMITS[@]}"; do
+                commit="${UNIQUE_COMMITS[$i]}"
+                subject=$(git log --format="%s" -n 1 "$commit" 2>/dev/null || echo "Invalid commit")
+                echo "  $((i+1)). $commit - $subject"
+            done
+            
+            echo
+            read -p "Enter the original commit (number or commit hash): " input
+            
+            if [[ "$input" =~ ^[0-9]+$ ]] && [[ "$input" -ge 1 ]] && [[ "$input" -le ${#UNIQUE_COMMITS[@]} ]]; then
+                ORIGINAL_COMMIT="${UNIQUE_COMMITS[$((input-1))]}"
+            else
+                ORIGINAL_COMMIT="$input"
+            fi
+        fi
+    fi
+fi
+
+# Safety checks
+if [[ -n $(git status --porcelain) ]]; then
+    echo "Error: Working directory is not clean. Please commit or stash changes first."
+    exit 1
+fi
+
+# Validate commits exist
+if ! git rev-parse --verify "$MERGED_COMMIT" >/dev/null 2>&1; then
+    echo "Error: Merged commit '$MERGED_COMMIT' does not exist."
+    exit 1
+fi
+
+if ! git rev-parse --verify "$ORIGINAL_COMMIT" >/dev/null 2>&1; then
+    echo "Error: Original commit '$ORIGINAL_COMMIT' does not exist."
+    exit 1
+fi
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+MERGED_COMMIT_HASH=$(git rev-parse "$MERGED_COMMIT")
+ORIGINAL_COMMIT_HASH=$(git rev-parse "$ORIGINAL_COMMIT")
+PARENT_COMMIT=$(git rev-parse "$MERGED_COMMIT~1")
+
+# Validate commit relationship and order
+echo "Validating commit relationship..."
+
+# Check if commits are the same
+if [[ "$MERGED_COMMIT_HASH" == "$ORIGINAL_COMMIT_HASH" ]]; then
+    echo "Error: Merged commit and original commit are the same."
+    echo "There's nothing to split."
+    exit 1
+fi
+
+# Check chronological order - merged commit should be newer (higher commit time)
+MERGED_TIME=$(git log -1 --format="%ct" "$MERGED_COMMIT_HASH")
+ORIGINAL_TIME=$(git log -1 --format="%ct" "$ORIGINAL_COMMIT_HASH")
+
+if [[ "$ORIGINAL_TIME" -gt "$MERGED_TIME" ]]; then
+    echo "Warning: Original commit ($ORIGINAL_COMMIT_HASH) is newer than merged commit ($MERGED_COMMIT_HASH)"
+    echo "This suggests the arguments might be in wrong order."
+    echo
+    echo "Expected: git split-amended-commit <newer-merged-commit> <older-original-commit>"
+    echo "You provided: git split-amended-commit <older-commit> <newer-commit>"
+    echo
+    read -p "Do you want to swap the arguments? (y/N): " swap_choice
+    if [[ "$swap_choice" == "y" || "$swap_choice" == "Y" ]]; then
+        # Swap the commits
+        TEMP="$MERGED_COMMIT_HASH"
+        MERGED_COMMIT_HASH="$ORIGINAL_COMMIT_HASH"
+        ORIGINAL_COMMIT_HASH="$TEMP"
+        PARENT_COMMIT=$(git rev-parse "$MERGED_COMMIT_HASH~1")
+        echo "✓ Swapped arguments: merged=$MERGED_COMMIT_HASH, original=$ORIGINAL_COMMIT_HASH"
+    else
+        echo "Continuing with provided order..."
+    fi
+fi
+
+# Validate that original commit changes are actually contained in merged commit
+echo "Checking if original commit changes are contained in merged commit..."
+
+# Get the changes introduced by the original commit
+ORIGINAL_CHANGES=$(git diff-tree --no-commit-id --name-only -r "$ORIGINAL_COMMIT_HASH" | sort)
+# Get the changes in the merged commit compared to its parent
+MERGED_CHANGES=$(git diff-tree --no-commit-id --name-only -r "$MERGED_COMMIT_HASH" | sort)
+
+# Check if all files changed in original commit are also changed in merged commit
+MISSING_FILES=()
+while IFS= read -r file; do
+    if [[ -n "$file" ]] && ! echo "$MERGED_CHANGES" | grep -Fxq "$file"; then
+        MISSING_FILES+=("$file")
+    fi
+done <<< "$ORIGINAL_CHANGES"
+
+if [[ ${#MISSING_FILES[@]} -gt 0 ]]; then
+    echo "Warning: Original commit modifies files not touched by merged commit:"
+    printf "  %s\n" "${MISSING_FILES[@]}"
+    echo
+    echo "This suggests the commits might not be related, or arguments are in wrong order."
+    echo
+    read -p "Continue anyway? (y/N): " continue_choice
+    if [[ "$continue_choice" != "y" && "$continue_choice" != "Y" ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+# Check if there are commits after the merged commit
+# This is crucial for handling commits in the middle of history
+COMMITS_AFTER=()
+if [[ "$MERGED_COMMIT_HASH" != "$(git rev-parse HEAD)" ]]; then
+    # Find commits that come after the merged commit on current branch
+    # These will need to be rebased on top of the split commits
+    while IFS= read -r commit; do
+        COMMITS_AFTER+=("$commit")
+    done < <(git rev-list "$MERGED_COMMIT_HASH..HEAD")
+fi
+
+echo "Current branch: $CURRENT_BRANCH"
+echo "Merged commit: $MERGED_COMMIT_HASH"
+echo "Original commit: $ORIGINAL_COMMIT_HASH"
+echo "Parent commit: $PARENT_COMMIT"
+
+if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
+    echo "Commits after merged commit: ${#COMMITS_AFTER[@]}"
+    echo "These will be rebased on top of the split commits"
+fi
+
+# Create backup branch
+BACKUP_BRANCH="backup-before-split-$(date +%Y%m%d-%H%M%S)"
+git branch "$BACKUP_BRANCH" HEAD
+echo "Created backup branch: $BACKUP_BRANCH"
+
+ORIGINAL_SUBJECT=$(git log --format="%s" -n 1 "$ORIGINAL_COMMIT_HASH")
+
+echo "Selected original commit: $ORIGINAL_COMMIT_HASH - $ORIGINAL_SUBJECT"
+
+# Show what will happen
+echo
+echo "Plan:"
+echo "1. Reset to parent commit: $PARENT_COMMIT"
+
+# Check if we can preserve the original commit ID
+ORIGINAL_PARENT=$(git rev-parse "$ORIGINAL_COMMIT_HASH~1" 2>/dev/null || echo "")
+if [[ "$ORIGINAL_PARENT" == "$PARENT_COMMIT" ]]; then
+    echo "2. Place original commit directly (preserving commit ID: $ORIGINAL_COMMIT_HASH)"
+else
+    echo "2. Cherry-pick original commit (commit ID will change from $ORIGINAL_COMMIT_HASH)"
+fi
+
+echo "3. Create new commit with remaining changes from merged commit"
+if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
+    echo "4. Rebase ${#COMMITS_AFTER[@]} commits that came after the merged commit"
+fi
+echo
+
+# Show diff preview
+echo "Changes in original commit:"
+git show --stat "$ORIGINAL_COMMIT_HASH"
+echo
+echo "Changes in merged commit:"
+git show --stat "$MERGED_COMMIT_HASH"
+echo
+
+read -p "Proceed with splitting? (y/N): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted. Backup branch $BACKUP_BRANCH still exists if needed."
+    exit 0
+fi
+
+# Reset to parent
+echo "Resetting to parent commit..."
+git reset --hard "$PARENT_COMMIT"
+
+# Instead of cherry-picking, we'll directly reset to the original commit to preserve its ID
+echo "Placing original commit (preserving original commit ID)..."
+
+# Check if original commit can be directly placed (i.e., it's a direct child of parent)
+ORIGINAL_PARENT=$(git rev-parse "$ORIGINAL_COMMIT_HASH~1" 2>/dev/null || echo "")
+
+if [[ "$ORIGINAL_PARENT" == "$PARENT_COMMIT" ]]; then
+    # Perfect case: original commit is direct child of parent, just reset to it
+    echo "Original commit is direct child of parent - using original commit directly"
+    git reset --hard "$ORIGINAL_COMMIT_HASH"
+else
+    # Original commit has different parent, need to cherry-pick (will create new ID)
+    echo "Original commit has different parent - cherry-picking (commit ID will change)"
+    if ! git cherry-pick "$ORIGINAL_COMMIT_HASH"; then
+        echo "Error: Failed to cherry-pick original commit."
+        echo "This might indicate conflicts or that the original commit wasn't actually part of the merged commit."
+        echo "Restoring original state..."
+        git reset --hard "$MERGED_COMMIT_HASH"
+        echo "You can manually delete the backup branch: git branch -D $BACKUP_BRANCH"
+        exit 1
+    fi
+fi
+
+# Get the changes that were in the merged commit but not in the original commit
+echo "Extracting remaining changes..."
+TEMP_PATCH=$(mktemp)
+git diff "$ORIGINAL_COMMIT_HASH" "$MERGED_COMMIT_HASH" > "$TEMP_PATCH"
+
+if [[ -s "$TEMP_PATCH" ]]; then
+    # Apply remaining changes
+    echo "Applying remaining changes..."
+    git apply "$TEMP_PATCH"
+    
+    # Check if there are changes to commit
+    if [[ -n $(git status --porcelain) ]]; then
+        # Extract original merged commit message 
+        MERGED_MSG=$(git log --format="%B" -n 1 "$MERGED_COMMIT_HASH")
+        ORIGINAL_MSG=$(git log --format="%B" -n 1 "$ORIGINAL_COMMIT_HASH")
+        
+        # Create commit message for remaining changes
+        NEW_MSG="Remaining changes (split from amended commit)
+
+Original merged commit message:
+$MERGED_MSG
+
+Original commit that was split out:
+$ORIGINAL_COMMIT_HASH - $(echo "$ORIGINAL_MSG" | head -1)
+
+🤖 Generated with git-split-amended-commit"
+        
+        git add -A
+        git commit -m "$NEW_MSG"
+        echo "Created new commit with remaining changes"
+    else
+        echo "No remaining changes found after cherry-picking original commit"
+    fi
+else
+    echo "No additional changes found - the merged commit was identical to the original commit"
+fi
+
+rm -f "$TEMP_PATCH"
+
+# Rebase commits that came after the merged commit
+# This is the key part that makes this script work with commits in the middle of history
+if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
+    echo
+    echo "Rebasing ${#COMMITS_AFTER[@]} commits that came after the merged commit..."
+    echo "This preserves your commit history: E -> F becomes E' -> F'"
+    
+    # Use git rebase --onto to move the commits after the merged commit
+    # onto the new split commits. This transforms:
+    # A -> B -> [merged:C+D] -> E -> F
+    # into: A -> B -> C -> D -> E' -> F'
+    if ! git rebase --onto HEAD "$MERGED_COMMIT_HASH" "$BACKUP_BRANCH"; then
+        echo "Error: Rebase failed. You may need to resolve conflicts manually."
+        echo "Current state: split completed, but later commits need manual rebasing"
+        echo "To continue: git rebase --continue (after resolving conflicts)"
+        echo "To abort: git reset --hard $BACKUP_BRANCH"
+        exit 1
+    fi
+    
+    echo "✓ Successfully rebased ${#COMMITS_AFTER[@]} commits"
+fi
+
+echo
+echo "✓ Split completed successfully!"
+echo "  Before: 1 merged commit containing both sets of changes"
+
+# Check if we preserved the original commit ID
+CURRENT_HEAD=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+if [[ "$CURRENT_HEAD" == "$ORIGINAL_COMMIT_HASH" ]]; then
+    echo "  After: Original commit (ID preserved: $ORIGINAL_COMMIT_HASH) + remaining changes"
+else
+    echo "  After: Original commit (new ID: $CURRENT_HEAD, original: $ORIGINAL_COMMIT_HASH) + remaining changes"
+fi
+
+if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
+    echo "  + ${#COMMITS_AFTER[@]} later commits rebased on top"
+fi
+echo
+echo "New commit history:"
+git log --oneline -$((5 + ${#COMMITS_AFTER[@]}))
+echo
+echo "Backup branch created: $BACKUP_BRANCH"
+echo "You can delete it with: git branch -D $BACKUP_BRANCH"
