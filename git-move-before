@@ -1,0 +1,263 @@
+#!/bin/bash
+
+# git-move-before: Move a commit to be positioned before another commit
+#
+# This script provides an intuitive way to reorder commits without using
+# interactive rebase. It moves a given commit to be positioned before 
+# another specified commit, handling the rebase operations automatically.
+#
+# Key features:
+# - More intuitive than git rebase -i for simple reordering
+# - Works with commits anywhere in history
+# - Preserves commits that come after the moved commit
+# - Interactive mode to help identify commits
+# - Creates automatic backups
+# - Handles rebase conflicts gracefully
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-move-before - Move a commit to be positioned before another commit
+
+USAGE:
+    git move-before <commit-to-move> <target-commit> [--help]
+    git move-before [--help]
+
+DESCRIPTION:
+    Moves the specified commit to be positioned immediately before the target commit.
+    This is more intuitive than using git rebase -i for simple commit reordering.
+    
+    The script handles the rebase operations automatically and preserves any
+    commits that come after the moved commit.
+
+ARGUMENTS:
+    <commit-to-move>    The commit to move (can be commit hash, branch name, etc.)
+    <target-commit>     The commit before which to place the moved commit
+
+OPTIONS:
+    --help             Show this help message
+
+EXAMPLES:
+    # Move commit abc123 to be before commit def456
+    git move-before abc123 def456
+    
+    # Move HEAD to be before a specific commit
+    git move-before HEAD def456
+    
+    # Interactive mode - script will help you identify commits
+    git move-before
+
+SCENARIOS:
+    # Before: A -> B -> C -> D -> E -> HEAD
+    # Command: git move-before D C
+    # After:  A -> B -> D -> C -> E -> HEAD
+    #         (D is now positioned before C)
+
+SAFETY:
+    - Creates backup branch before making changes
+    - Requires clean working directory
+    - Shows preview before making changes
+    - Validates commit relationships
+
+SEE ALSO:
+    git-move-after, git-split-amended-commit
+EOF
+}
+
+# Initialize variables
+COMMIT_TO_MOVE=""
+TARGET_COMMIT=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option $1"
+            usage
+            exit 1
+            ;;
+        *)
+            if [[ -z "$COMMIT_TO_MOVE" ]]; then
+                COMMIT_TO_MOVE="$1"
+            elif [[ -z "$TARGET_COMMIT" ]]; then
+                TARGET_COMMIT="$1"
+            else
+                echo "Error: Too many arguments"
+                usage
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Interactive mode if no arguments provided
+if [[ -z "$COMMIT_TO_MOVE" ]]; then
+    echo "Interactive mode: help identify commits to reorder"
+    echo
+    echo "Recent commits:"
+    git log --oneline -10
+    echo
+    read -p "Enter the commit to move (default: HEAD): " input
+    COMMIT_TO_MOVE="${input:-HEAD}"
+fi
+
+if [[ -z "$TARGET_COMMIT" ]]; then
+    echo
+    echo "Recent commits:"
+    git log --oneline -10
+    echo
+    read -p "Enter the target commit (to place the moved commit before): " TARGET_COMMIT
+fi
+
+# Safety checks
+if [[ -n $(git status --porcelain) ]]; then
+    echo "Error: Working directory is not clean. Please commit or stash changes first."
+    exit 1
+fi
+
+# Validate commits exist
+if ! git rev-parse --verify "$COMMIT_TO_MOVE" >/dev/null 2>&1; then
+    echo "Error: Commit to move '$COMMIT_TO_MOVE' does not exist."
+    exit 1
+fi
+
+if ! git rev-parse --verify "$TARGET_COMMIT" >/dev/null 2>&1; then
+    echo "Error: Target commit '$TARGET_COMMIT' does not exist."
+    exit 1
+fi
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+COMMIT_TO_MOVE_HASH=$(git rev-parse "$COMMIT_TO_MOVE")
+TARGET_COMMIT_HASH=$(git rev-parse "$TARGET_COMMIT")
+
+# Validate commits are different
+if [[ "$COMMIT_TO_MOVE_HASH" == "$TARGET_COMMIT_HASH" ]]; then
+    echo "Error: Commit to move and target commit are the same."
+    echo "Nothing to do."
+    exit 1
+fi
+
+# Check if commits are on the same branch/ancestry
+if ! git merge-base --is-ancestor "$TARGET_COMMIT_HASH" HEAD >/dev/null 2>&1; then
+    echo "Error: Target commit '$TARGET_COMMIT_HASH' is not in the current branch's history."
+    exit 1
+fi
+
+if ! git merge-base --is-ancestor "$COMMIT_TO_MOVE_HASH" HEAD >/dev/null 2>&1; then
+    echo "Error: Commit to move '$COMMIT_TO_MOVE_HASH' is not in the current branch's history."
+    exit 1
+fi
+
+# Check if target commit comes after the commit to move (which would be invalid for move-before)
+if git merge-base --is-ancestor "$COMMIT_TO_MOVE_HASH" "$TARGET_COMMIT_HASH" && [[ "$COMMIT_TO_MOVE_HASH" != "$TARGET_COMMIT_HASH" ]]; then
+    echo "Error: Target commit comes after the commit to move in history."
+    echo "Use git-move-after if you want to move a commit to come after another commit."
+    exit 1
+fi
+
+# Check if commit is already positioned correctly
+TARGET_PARENT=$(git rev-parse "$TARGET_COMMIT_HASH~1" 2>/dev/null || echo "")
+if [[ "$COMMIT_TO_MOVE_HASH" == "$TARGET_PARENT" ]] || [[ "$COMMIT_TO_MOVE_HASH" == "$(git rev-list --max-count=1 "$TARGET_PARENT..$TARGET_COMMIT_HASH~1" 2>/dev/null || echo "")" ]]; then
+    echo "Commit $COMMIT_TO_MOVE_HASH is already positioned immediately before $TARGET_COMMIT_HASH"
+    echo "Nothing to do."
+    exit 0
+fi
+
+# Find commits that come after the commit to move
+COMMITS_AFTER=()
+if [[ "$COMMIT_TO_MOVE_HASH" != "$(git rev-parse HEAD)" ]]; then
+    while IFS= read -r commit; do
+        COMMITS_AFTER+=("$commit")
+    done < <(git rev-list "$COMMIT_TO_MOVE_HASH..HEAD")
+fi
+
+echo "Current branch: $CURRENT_BRANCH"
+echo "Commit to move: $COMMIT_TO_MOVE_HASH"
+echo "Target commit: $TARGET_COMMIT_HASH"
+
+if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
+    echo "Commits after moved commit: ${#COMMITS_AFTER[@]}"
+    echo "These will be rebased to maintain their relative order"
+fi
+
+# Create backup branch
+BACKUP_BRANCH="backup-before-move-before-$(date +%Y%m%d-%H%M%S)"
+git branch "$BACKUP_BRANCH" HEAD
+echo "Created backup branch: $BACKUP_BRANCH"
+
+# Show what will happen
+echo
+echo "Plan:"
+echo "1. Move commit $COMMIT_TO_MOVE_HASH to be before $TARGET_COMMIT_HASH"
+if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
+    echo "2. Rebase ${#COMMITS_AFTER[@]} commits that came after the moved commit"
+fi
+echo
+
+# Show commit details
+echo "Commit to move:"
+git show --oneline --stat "$COMMIT_TO_MOVE_HASH"
+echo
+echo "Target commit (will come after moved commit):"
+git show --oneline --stat "$TARGET_COMMIT_HASH"
+echo
+
+read -p "Proceed with moving commit? (y/N): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted. Backup branch $BACKUP_BRANCH can be deleted if not needed."
+    git branch -D "$BACKUP_BRANCH"
+    exit 0
+fi
+
+echo "Moving commit..."
+
+# Strategy for move-before:
+# We need to move the commit to be positioned just before the target commit
+# This means rebasing the commit onto the target commit's parent
+
+TARGET_PARENT=$(git rev-parse "$TARGET_COMMIT_HASH~1" 2>/dev/null || echo "")
+if [[ -z "$TARGET_PARENT" ]]; then
+    echo "Error: Target commit has no parent (it's the root commit). Cannot move before it."
+    git branch -D "$BACKUP_BRANCH"
+    exit 1
+fi
+
+# First, rebase the commit to move onto the target's parent
+if ! git rebase --onto "$TARGET_PARENT" "$COMMIT_TO_MOVE_HASH~1" "$COMMIT_TO_MOVE_HASH"; then
+    echo "Error: Failed to move commit. You may need to resolve conflicts manually."
+    echo "To continue: git rebase --continue (after resolving conflicts)"
+    echo "To abort: git rebase --abort && git reset --hard $BACKUP_BRANCH"
+    exit 1
+fi
+
+# Now we need to rebase the target commit and everything that follows onto the moved commit
+# The moved commit is now at HEAD, we need to rebase from target onwards
+MOVED_COMMIT_NEW_HASH=$(git rev-parse HEAD)
+
+# Rebase the target commit and everything after it onto the moved commit
+if ! git rebase --onto "$MOVED_COMMIT_NEW_HASH" "$TARGET_COMMIT_HASH~1" "$BACKUP_BRANCH"; then
+    echo "Error: Failed to rebase target and later commits. You may need to resolve conflicts manually."
+    echo "To continue: git rebase --continue (after resolving conflicts)"  
+    echo "To abort: git rebase --abort && git reset --hard $BACKUP_BRANCH"
+    exit 1
+fi
+
+echo
+echo "✓ Move completed successfully!"
+echo "  Moved commit $COMMIT_TO_MOVE_HASH to be before $TARGET_COMMIT_HASH"
+
+if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
+    echo "  + ${#COMMITS_AFTER[@]} later commits rebased to maintain order"
+fi
+echo
+echo "New commit history:"
+git log --oneline -$((10 + ${#COMMITS_AFTER[@]}))
+echo
+echo "Backup branch created: $BACKUP_BRANCH"
+echo "You can delete it with: git branch -D $BACKUP_BRANCH"

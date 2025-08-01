@@ -1,7 +1,6 @@
 #!/usr/bin/env ruby
 
 require 'awesome_print'
-require_relative '../colorize'
 
 VERBOSE = ARGV.delete('-v') || ARGV.delete('--verbose')
 
@@ -152,7 +151,7 @@ def show_commits commits, prefix="    "
     max -= 1 if max == commits.size - 1 # never show "and 1 more"
     commits[0 ... max].each { |c|
         printf "#{prefix}%s\n", c
-        commit = c.match(/\[([^\]]+)\]/)[1].remove_color
+        commit = c.match(/\[([^\]]+)\]/)[1].gsub(/\e\[[\d;]*m/, '')
         if $show_filename
             files = `git show --pretty=format: --name-only #{commit}`.split("\n")
             printf "%s\n", files.map {|it| prefix + "\t * " + it}.join("\n") if files.length > 0
