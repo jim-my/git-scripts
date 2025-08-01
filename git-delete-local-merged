@@ -1,8 +1,176 @@
-#!/bin/sh
-#
-# Delete all local branches that have been merged into HEAD. Stolen from
-# our favorite @tekkub:
-#
-#   https://plus.google.com/115587336092124934674/posts/dXsagsvLakJ
+#!/bin/bash
 
-git branch -d `git branch --merged | grep -v '^*' | grep -v 'master' | tr -d '\n'`
+# git-delete-local-merged: Delete all local branches merged into current branch
+#
+# This script safely deletes local branches that have been completely merged
+# into the current branch. It protects important branches like master/main
+# and provides confirmation before deletion.
+#
+# Safety features:
+# - Validates you're in a git repository
+# - Protects master/main/develop branches
+# - Shows which branches will be deleted
+# - Asks for confirmation before deletion
+# - Handles cases where no branches need deletion
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-delete-local-merged - Delete local branches merged into current branch
+
+USAGE:
+    git delete-local-merged [--help] [--dry-run]
+
+DESCRIPTION:
+    Deletes all local branches that have been completely merged into the
+    current branch. This helps clean up feature branches after they've
+    been merged.
+    
+    Protected branches that will never be deleted:
+    - master, main, develop, development
+    - The currently checked out branch
+
+OPTIONS:
+    --help      Show this help message
+    --dry-run   Show which branches would be deleted without deleting them
+
+EXAMPLES:
+    # Delete merged branches (with confirmation)
+    git delete-local-merged
+    
+    # See which branches would be deleted
+    git delete-local-merged --dry-run
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Protects important branches from deletion
+    - Shows branches before deletion and asks for confirmation
+    - Uses 'git branch -d' (safe deletion that prevents data loss)
+
+SEE ALSO:
+    git branch -d, git branch --merged
+
+Reference: https://plus.google.com/115587336092124934674/posts/dXsagsvLakJ
+EOF
+}
+
+# Initialize variables
+DRY_RUN=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Check if repository has any commits
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "Error: No commits found in repository"
+    exit 1
+fi
+
+# Get current branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Define protected branches (these will never be deleted)
+PROTECTED_BRANCHES=("master" "main" "develop" "development" "$CURRENT_BRANCH")
+
+# Get list of merged branches, excluding protected ones
+MERGED_BRANCHES=()
+while IFS= read -r branch; do
+    # Remove leading/trailing whitespace and asterisk
+    branch=$(echo "$branch" | sed 's/^[[:space:]]*\*[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+    
+    # Skip empty lines
+    [[ -z "$branch" ]] && continue
+    
+    # Check if branch is protected
+    is_protected=false
+    for protected in "${PROTECTED_BRANCHES[@]}"; do
+        if [[ "$branch" == "$protected" ]]; then
+            is_protected=true
+            break
+        fi
+    done
+    
+    # Add to deletion list if not protected
+    if [[ "$is_protected" == false ]]; then
+        MERGED_BRANCHES+=("$branch")
+    fi
+done < <(git branch --merged)
+
+# Handle case where no branches need deletion
+if [[ ${#MERGED_BRANCHES[@]} -eq 0 ]]; then
+    echo "No merged branches found that can be safely deleted."
+    echo
+    echo "Protected branches (never deleted): ${PROTECTED_BRANCHES[*]}"
+    exit 0
+fi
+
+echo "Current branch: $CURRENT_BRANCH"
+echo "Protected branches (never deleted): ${PROTECTED_BRANCHES[*]}"
+echo
+
+if [[ "$DRY_RUN" == true ]]; then
+    echo "Branches that would be deleted (${#MERGED_BRANCHES[@]} total):"
+    printf "  %s\n" "${MERGED_BRANCHES[@]}"
+    echo
+    echo "Run without --dry-run to actually delete these branches."
+    exit 0
+fi
+
+echo "Merged branches that will be deleted (${#MERGED_BRANCHES[@]} total):"
+printf "  %s\n" "${MERGED_BRANCHES[@]}"
+echo
+
+read -p "Delete these merged branches? (y/N): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+echo "Deleting merged branches..."
+DELETED_COUNT=0
+FAILED_DELETIONS=()
+
+for branch in "${MERGED_BRANCHES[@]}"; do
+    if git branch -d "$branch" 2>/dev/null; then
+        echo "✓ Deleted: $branch"
+        ((DELETED_COUNT++))
+    else
+        echo "✗ Failed to delete: $branch"
+        FAILED_DELETIONS+=("$branch")
+    fi
+done
+
+echo
+echo "Summary:"
+echo "- Successfully deleted: $DELETED_COUNT branches"
+
+if [[ ${#FAILED_DELETIONS[@]} -gt 0 ]]; then
+    echo "- Failed to delete: ${#FAILED_DELETIONS[@]} branches"
+    echo "  Failed branches: ${FAILED_DELETIONS[*]}"
+    echo "  (These may have unmerged changes or other issues)"
+fi
+
+echo "✓ Branch cleanup completed!"

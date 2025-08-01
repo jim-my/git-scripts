@@ -1,7 +1,105 @@
-#!/bin/sh
-#
-# Undo your last commit, but don't throw away your changes
+#!/bin/bash
 
-# http://stackoverflow.com/a/15321456/393795
-echo git reset --soft HEAD^
+# git-undo: Undo your last commit, but don't throw away your changes
+#
+# This script performs a soft reset to undo the last commit while preserving
+# your changes in the staging area. This is useful when you want to modify
+# your last commit or split it into multiple commits.
+#
+# Safety features:
+# - Validates you're in a git repository
+# - Checks that there are commits to undo
+# - Shows confirmation before proceeding
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-undo - Undo your last commit, but keep your changes
+
+USAGE:
+    git undo [--help]
+
+DESCRIPTION:
+    Undoes your last commit using 'git reset --soft HEAD^', which removes
+    the commit from history but keeps all the changes staged for commit.
+    
+    This is useful when you want to:
+    - Modify your last commit message
+    - Split your last commit into multiple commits
+    - Add more changes to your last commit
+
+OPTIONS:
+    --help    Show this help message
+
+EXAMPLES:
+    # Undo the last commit but keep changes staged
+    git undo
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Confirms there are commits to undo
+    - Shows what will be undone before proceeding
+
+SEE ALSO:
+    git-amend, git reset --soft HEAD^
+
+Reference: http://stackoverflow.com/a/15321456/393795
+EOF
+}
+
+# Parse arguments
+if [[ $# -gt 0 ]]; then
+    case $1 in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'"
+            usage
+            exit 1
+            ;;
+    esac
+fi
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Check if there are any commits to undo
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "Error: No commits found. Cannot undo from an empty repository."
+    exit 1
+fi
+
+# Show what will be undone
+echo "Current HEAD commit that will be undone:"
+git log --oneline -1 HEAD
+echo
+
+# Check if this is the only commit (no parent)
+if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    echo "Warning: This is the first commit in the repository."
+    echo "Undoing it will leave you with an empty repository."
+    echo
+fi
+
+read -p "Proceed with undoing the last commit? (y/N): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+echo "Executing: git reset --soft HEAD^"
 git reset --soft HEAD^
+
+echo "✓ Last commit undone successfully!"
+echo "Your changes are now staged and ready for commit."
+
+# Show current status
+echo
+echo "Current status:"
+git status --short

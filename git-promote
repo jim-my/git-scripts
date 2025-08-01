@@ -1,18 +1,240 @@
-#!/bin/sh
+#!/bin/bash
+
+# git-promote: Promote local branch to remote tracking branch
 #
-# Promotes a local topic branch to a remote tracking branch of the same name,
-# by pushing and then setting up the git config
+# Promotes a local topic branch to a remote tracking branch of the same name
+# by pushing it to the remote and setting up the git configuration for tracking.
+# This establishes the relationship between local and remote branches.
 #
-# Thanks to ENTP:
-# http://hoth.entp.com/2008/11/10/improving-my-git-workflow
+# Safety features:
+# - Validates you're in a git repository
+# - Checks for clean working directory
+# - Shows what will be done before proceeding
+# - Handles cases where remote already exists
 
-curr_branch=$(git symbolic-ref -q HEAD | sed -e 's|^refs/heads/||')
+set -euo pipefail
 
-remote_branch=$(git branch -r | grep "origin/${curr_branch}")
-[ -z "${remote_branch}" ] && ( git push origin "${curr_branch}" )
+usage() {
+    cat << 'EOF'
+git-promote - Promote local branch to remote tracking branch
 
-origin=$(git config --get "branch.${curr_branch}.remote")
-[ -z "${origin}" ] && ( git config --add "branch.${curr_branch}.remote" origin )
+USAGE:
+    git promote [remote] [--help] [--force]
 
-merge=$(git config --get "branch.${curr_branch}.merge")
-[ -z "${merge}" ] && ( git config --add "branch.${curr_branch}.merge" "refs/heads/${curr_branch}" )
+DESCRIPTION:
+    Promotes the current local branch to a remote tracking branch of the same name.
+    This involves:
+    1. Pushing the branch to the remote (if not already there)
+    2. Setting up tracking configuration between local and remote branch
+    
+    This is useful for converting a local-only branch into a proper feature branch
+    that tracks a remote branch.
+
+ARGUMENTS:
+    [remote]       The remote to push to (default: origin)
+
+OPTIONS:
+    --help         Show this help message
+    --force        Skip confirmation prompts
+
+EXAMPLES:
+    # Promote current branch to origin
+    git promote
+    
+    # Promote current branch to specific remote
+    git promote upstream
+    
+    # Promote without confirmation
+    git promote --force
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Shows what will be pushed before proceeding
+    - Warns if working directory is not clean
+    - Sets up proper tracking configuration
+
+SEE ALSO:
+    git push -u, git branch --set-upstream-to
+
+Reference: http://hoth.entp.com/2008/11/10/improving-my-git-workflow
+EOF
+}
+
+# Initialize variables
+REMOTE="origin"
+FORCE=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --force|-f)
+            FORCE=true
+            shift
+            ;;
+        -*)
+            echo "Error: Unknown option '$1'"
+            usage
+            exit 1
+            ;;
+        *)
+            REMOTE="$1"
+            shift
+            ;;
+    esac
+done
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Check if repository has any commits
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "Error: No commits found in repository"
+    exit 1
+fi
+
+# Get current branch name
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Check if we're in detached HEAD state
+if [[ "$CURRENT_BRANCH" == "HEAD" ]]; then
+    echo "Error: Cannot promote - you're in detached HEAD state"
+    echo "Checkout a branch first with: git checkout -b <branch-name>"
+    exit 1
+fi
+
+# Check if remote exists
+if ! git remote | grep -qx "$REMOTE"; then
+    echo "Error: Remote '$REMOTE' does not exist"
+    echo "Available remotes:"
+    git remote -v
+    exit 1
+fi
+
+# Show current status
+echo "Current branch: $CURRENT_BRANCH"
+echo "Target remote: $REMOTE"
+
+# Check if working directory is clean
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo
+    echo "Warning: Working directory is not clean:"
+    git status --short
+    echo
+    if [[ "$FORCE" == false ]]; then
+        read -p "Continue with promotion anyway? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Aborted. Clean your working directory and try again."
+            exit 1
+        fi
+    fi
+fi
+
+# Check if remote branch already exists
+REMOTE_BRANCH_EXISTS=false
+if git ls-remote --heads "$REMOTE" "$CURRENT_BRANCH" | grep -q "$CURRENT_BRANCH"; then
+    REMOTE_BRANCH_EXISTS=true
+    echo "Remote branch $REMOTE/$CURRENT_BRANCH already exists"
+else
+    echo "Remote branch $REMOTE/$CURRENT_BRANCH does not exist - will be created"
+fi
+
+# Check current tracking status
+CURRENT_REMOTE=$(git config --get "branch.$CURRENT_BRANCH.remote" 2>/dev/null || echo "")
+CURRENT_MERGE=$(git config --get "branch.$CURRENT_BRANCH.merge" 2>/dev/null || echo "")
+
+if [[ -n "$CURRENT_REMOTE" && -n "$CURRENT_MERGE" ]]; then
+    echo "Current tracking: $CURRENT_REMOTE/$(echo "$CURRENT_MERGE" | sed 's|refs/heads/||')"
+    if [[ "$CURRENT_REMOTE" == "$REMOTE" && "$CURRENT_MERGE" == "refs/heads/$CURRENT_BRANCH" ]]; then
+        echo "Branch is already properly configured for tracking"
+        if [[ "$REMOTE_BRANCH_EXISTS" == true ]]; then
+            echo "Nothing to do - branch is already promoted"
+            exit 0
+        fi
+    fi
+else
+    echo "No tracking configured"
+fi
+
+echo
+echo "Plan:"
+if [[ "$REMOTE_BRANCH_EXISTS" == false ]]; then
+    echo "1. Push branch '$CURRENT_BRANCH' to remote '$REMOTE'"
+else
+    echo "1. Ensure local branch is up to date with remote"
+fi
+echo "2. Set up tracking configuration:"
+echo "   - branch.$CURRENT_BRANCH.remote = $REMOTE"
+echo "   - branch.$CURRENT_BRANCH.merge = refs/heads/$CURRENT_BRANCH"
+
+if [[ "$FORCE" == false ]]; then
+    echo
+    read -p "Proceed with promotion? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+fi
+
+echo
+echo "Promoting branch '$CURRENT_BRANCH'..."
+
+# Push the branch if it doesn't exist on remote, or ensure it's up to date
+if [[ "$REMOTE_BRANCH_EXISTS" == false ]]; then
+    echo "Pushing branch to remote..."
+    if git push "$REMOTE" "$CURRENT_BRANCH"; then
+        echo "✓ Branch pushed successfully"
+    else
+        echo "✗ Failed to push branch"
+        exit 1
+    fi
+else
+    echo "Remote branch exists - checking if push is needed..."
+    # Check if local is ahead of remote
+    if git log "$REMOTE/$CURRENT_BRANCH..HEAD" --oneline | grep -q .; then
+        echo "Local branch has unpushed commits - pushing..."
+        if git push "$REMOTE" "$CURRENT_BRANCH"; then
+            echo "✓ Updates pushed successfully"
+        else
+            echo "✗ Failed to push updates"
+            exit 1
+        fi
+    else
+        echo "Local branch is up to date with remote"
+    fi
+fi
+
+# Set up tracking configuration
+echo "Configuring tracking..."
+
+# Set remote
+if git config --get "branch.$CURRENT_BRANCH.remote" >/dev/null 2>&1; then
+    git config "branch.$CURRENT_BRANCH.remote" "$REMOTE"
+    echo "✓ Updated remote configuration"
+else
+    git config --add "branch.$CURRENT_BRANCH.remote" "$REMOTE"
+    echo "✓ Added remote configuration"
+fi
+
+# Set merge reference
+if git config --get "branch.$CURRENT_BRANCH.merge" >/dev/null 2>&1; then
+    git config "branch.$CURRENT_BRANCH.merge" "refs/heads/$CURRENT_BRANCH"
+    echo "✓ Updated merge configuration"
+else
+    git config --add "branch.$CURRENT_BRANCH.merge" "refs/heads/$CURRENT_BRANCH"
+    echo "✓ Added merge configuration"
+fi
+
+echo
+echo "✓ Branch '$CURRENT_BRANCH' promoted successfully!"
+echo "  Local branch now tracks: $REMOTE/$CURRENT_BRANCH"
+echo
+echo "You can now use:"
+echo "  git pull    # to pull changes from remote"
+echo "  git push    # to push changes to remote"

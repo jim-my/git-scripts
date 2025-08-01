@@ -1,36 +1,166 @@
-#!/bin/sh
+#!/bin/bash
+
+# git-up: Enhanced git pull with change summary
 #
-# Usage: git-up
-#        git-reup
-#
-# Like git-pull but show a short and sexy log of changes
+# Like git-pull but shows a short and informative log of changes
 # immediately after merging (git-up) or rebasing (git-reup).
+# This provides better visibility into what was pulled from remote.
 #
-# Inspired by Kyle Neath's `git up' alias:
-# http://gist.github.com/249223
+# When invoked as git-reup, it runs with --rebase flag automatically.
 #
-# Stolen from Ryan Tomayko
-# http://github.com/rtomayko/dotfiles/blob/rtomayko/bin/git-up
+# Safety features:
+# - Validates you're in a git repository
+# - Checks for clean working directory before rebase
+# - Shows comprehensive change summary after pull
 
-set -e
+set -euo pipefail
 
-PULL_ARGS="$@"
+usage() {
+    cat << 'EOF'
+git-up - Enhanced git pull with change summary
 
-# when invoked as git-reup, run as `git pull --rebase'
-test "$(basename $0)" = "git-reup" &&
-PULL_ARGS="--rebase $PULL_ARGS"
+USAGE:
+    git up [git-pull-options] [--help]
+    git reup [git-pull-options] [--help]  (same as: git up --rebase)
 
-git pull $PULL_ARGS
+DESCRIPTION:
+    Like git-pull but shows a short and informative summary of changes
+    immediately after pulling. When invoked as 'git-reup', automatically
+    uses --rebase flag.
+    
+    Shows:
+    - Abbreviated commit log of new changes
+    - Diffstat summary (for rebase operations)
+    - Clear indication of what was updated
 
-# show diffstat of all changes if we're pulling with --rebase. not
-# sure why git-pull only does this when merging.
-test "$(basename $0)" = "git-reup" && {
-    echo "Diff:"
-    git --no-pager diff --color --stat HEAD@{1}.. |
-    sed 's/^/ /'
+OPTIONS:
+    --help    Show this help message
+    
+    All other options are passed directly to git pull.
+
+EXAMPLES:
+    # Pull with merge and show changes
+    git up
+    
+    # Pull with rebase and show changes  
+    git reup
+    # or: git up --rebase
+    
+    # Pull from specific remote/branch
+    git up origin main
+
+SAFETY:
+    - Requires you to be in a git repository
+    - For rebase operations, ensures working directory is clean
+    - Shows what changes were pulled
+
+SEE ALSO:
+    git pull, git pull --rebase
+
+References:
+- Inspired by Kyle Neath: http://gist.github.com/249223
+- Based on Ryan Tomayko: http://github.com/rtomayko/dotfiles/blob/rtomayko/bin/git-up
+EOF
 }
 
-# show an abbreviated commit log of stuff that was just merged.
-echo "Log:"
-git log --color --pretty=oneline --abbrev-commit HEAD@{1}.. |
-sed 's/^/  /'
+# Check for help flag before processing
+for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        usage
+        exit 0
+    fi
+done
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Determine if we're running as git-reup (rebase mode)
+SCRIPT_NAME=$(basename "$0")
+IS_REBASE=false
+
+if [[ "$SCRIPT_NAME" == "git-reup" ]]; then
+    IS_REBASE=true
+fi
+
+# Build pull arguments
+PULL_ARGS=("$@")
+
+if [[ "$IS_REBASE" == true ]]; then
+    PULL_ARGS=("--rebase" "${PULL_ARGS[@]}")
+fi
+
+# For rebase operations, check if working directory is clean
+if [[ "$IS_REBASE" == true ]] || [[ " ${PULL_ARGS[*]} " =~ " --rebase " ]]; then
+    if [[ -n "$(git status --porcelain)" ]]; then
+        echo "Warning: Working directory is not clean."
+        echo "Rebase operations work best with a clean working directory."
+        echo
+        echo "Current status:"
+        git status --short
+        echo
+        read -p "Continue with rebase anyway? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Aborted. Clean your working directory and try again."
+            exit 1
+        fi
+    fi
+fi
+
+# Store current HEAD for comparison
+OLD_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+
+# Show what we're about to do
+if [[ "$IS_REBASE" == true ]]; then
+    echo "Executing: git pull --rebase ${PULL_ARGS[@]:1}"
+else
+    echo "Executing: git pull ${PULL_ARGS[*]}"
+fi
+
+# Execute the pull
+if git pull "${PULL_ARGS[@]}"; then
+    echo "✓ Pull completed successfully!"
+else
+    echo "✗ Pull failed. You may need to resolve conflicts manually."
+    exit 1
+fi
+
+# Get new HEAD for comparison
+NEW_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+
+# Check if anything was actually pulled
+if [[ "$OLD_HEAD" == "$NEW_HEAD" ]]; then
+    echo "Already up to date."
+    exit 0
+fi
+
+echo
+echo "Changes pulled:"
+
+# Show diffstat for rebase operations (git pull doesn't show this for rebase)
+if [[ "$IS_REBASE" == true ]] || [[ " ${PULL_ARGS[*]} " =~ " --rebase " ]]; then
+    if git rev-parse --verify HEAD@{1} >/dev/null 2>&1; then
+        echo "Diff summary:"
+        git --no-pager diff --color --stat HEAD@{1}.. | sed 's/^/  /'
+        echo
+    fi
+fi
+
+# Show abbreviated commit log of changes that were pulled
+if git rev-parse --verify HEAD@{1} >/dev/null 2>&1; then
+    COMMIT_COUNT=$(git rev-list --count HEAD@{1}..HEAD 2>/dev/null || echo "0")
+    echo "New commits ($COMMIT_COUNT):"
+    
+    if [[ "$COMMIT_COUNT" -gt 0 ]]; then
+        git log --color --pretty=format:"  %C(yellow)%h%C(reset) %s %C(dim)(%an, %ar)%C(reset)" HEAD@{1}..
+        echo
+    else
+        echo "  (no new commits)"
+    fi
+else
+    echo "Unable to show commit comparison (HEAD@{1} not available)"
+fi
+
+echo

@@ -1,13 +1,137 @@
-#!/bin/sh
-#
-# A very slightly quicker way to credit an author on the latest commit.
-#
-# $1 - The full name of the author.
-# $2 - The email address of the author.
-#
-# Examples
-#
-#   git credit "Zach Holman" zach@example.com
-#
+#!/bin/bash
 
-git commit --amend --author "$1 <$2>" -C HEAD
+# git-credit: Credit an author on the latest commit
+#
+# A quick way to change the author of the most recent commit while keeping
+# the same commit message. This is useful for properly attributing work
+# when committing on behalf of someone else.
+#
+# Safety features:
+# - Validates you're in a git repository
+# - Checks that there are commits to modify
+# - Validates email format
+# - Warns about already-pushed commits
+# - Shows current and new author information
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-credit - Credit an author on the latest commit
+
+USAGE:
+    git credit <full-name> <email> [--help]
+
+DESCRIPTION:
+    Changes the author of the most recent commit while keeping the same
+    commit message. This is useful for properly attributing work when
+    committing on behalf of someone else.
+
+ARGUMENTS:
+    <full-name>    The full name of the author (use quotes if it contains spaces)
+    <email>        The email address of the author
+
+OPTIONS:
+    --help         Show this help message
+
+EXAMPLES:
+    # Credit someone for the last commit
+    git credit "Jane Doe" jane.doe@example.com
+    
+    # Credit with a simple name
+    git credit johnsmith john@example.com
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Validates email format
+    - Warns if the commit has been pushed to a remote
+    - Shows author change before applying
+
+WARNING:
+    Only modify commits that haven't been pushed to a shared repository.
+    Changing pushed commits can cause issues for other developers.
+
+SEE ALSO:
+    git commit --amend --author, git-amend
+EOF
+}
+
+# Parse arguments
+if [[ $# -eq 0 ]] || [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+if [[ $# -ne 2 ]]; then
+    echo "Error: Expected exactly 2 arguments (name and email)"
+    echo
+    usage
+    exit 1
+fi
+
+AUTHOR_NAME="$1"
+AUTHOR_EMAIL="$2"
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Check if there are any commits to modify
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "Error: No commits found. Cannot credit author in an empty repository."
+    exit 1
+fi
+
+# Validate email format (basic check)
+if [[ ! "$AUTHOR_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+    echo "Warning: '$AUTHOR_EMAIL' doesn't look like a valid email address."
+    read -p "Continue anyway? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+# Show current commit information
+echo "Current HEAD commit:"
+git log --format="  Commit: %H%n  Author: %an <%ae>%n  Date: %ad%n  Message: %s" -1 HEAD
+echo
+
+# Check if this commit exists on any remote (warning about rewriting history)
+COMMIT_HASH=$(git rev-parse HEAD)
+REMOTES_WITH_COMMIT=()
+
+while IFS= read -r remote; do
+    if git branch -r --contains "$COMMIT_HASH" | grep -q "^[[:space:]]*$remote/" 2>/dev/null; then
+        REMOTES_WITH_COMMIT+=("$remote")
+    fi
+done < <(git remote)
+
+if [[ ${#REMOTES_WITH_COMMIT[@]} -gt 0 ]]; then
+    echo "⚠️  WARNING: This commit exists on remote(s): ${REMOTES_WITH_COMMIT[*]}"
+    echo "   Changing the author will rewrite history and may cause issues for other developers."
+    echo "   Consider creating a new commit instead."
+    echo
+fi
+
+# Show what the new author will be
+echo "New author will be: $AUTHOR_NAME <$AUTHOR_EMAIL>"
+echo
+
+read -p "Proceed with changing the author? (y/N): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+echo "Executing: git commit --amend --author \"$AUTHOR_NAME <$AUTHOR_EMAIL>\" -C HEAD"
+git commit --amend --author "$AUTHOR_NAME <$AUTHOR_EMAIL>" -C HEAD
+
+echo "✓ Author updated successfully!"
+
+# Show the updated commit
+echo
+echo "Updated commit:"
+git log --format="  Commit: %H%n  Author: %an <%ae>%n  Date: %ad%n  Message: %s" -1 HEAD

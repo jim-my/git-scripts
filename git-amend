@@ -1,5 +1,128 @@
-#!/bin/sh
-#
-# Use the last commit message and amend your stuffs.
+#!/bin/bash
 
+# git-amend: Use the last commit message and amend your changes
+#
+# This script amends the last commit with any staged changes while reusing
+# the existing commit message. This is a quick way to add forgotten changes
+# to your last commit without changing the commit message.
+#
+# Safety features:
+# - Validates you're in a git repository
+# - Checks that there are commits to amend
+# - Shows what changes will be included
+# - Warns about already-pushed commits
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-amend - Amend your last commit with staged changes
+
+USAGE:
+    git amend [--help]
+
+DESCRIPTION:
+    Amends the last commit with any currently staged changes while keeping
+    the same commit message. This is equivalent to 'git commit --amend -C HEAD'.
+    
+    This is useful when you want to add forgotten changes to your last commit
+    without modifying the commit message.
+
+OPTIONS:
+    --help    Show this help message
+
+EXAMPLES:
+    # Stage some changes and amend them to the last commit
+    git add forgotten-file.txt
+    git amend
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Warns if the commit has been pushed to a remote
+    - Shows staged changes before amending
+
+WARNING:
+    Only amend commits that haven't been pushed to a shared repository.
+    Amending pushed commits can cause issues for other developers.
+
+SEE ALSO:
+    git-undo, git commit --amend
+EOF
+}
+
+# Parse arguments
+if [[ $# -gt 0 ]]; then
+    case $1 in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'"
+            usage
+            exit 1
+            ;;
+    esac
+fi
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Check if there are any commits to amend
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "Error: No commits found. Cannot amend in an empty repository."
+    echo "Use 'git commit' to create your first commit."
+    exit 1
+fi
+
+# Check if there are staged changes to amend
+if git diff --cached --quiet; then
+    echo "No staged changes found."
+    echo "Stage some changes first with 'git add <files>' before amending."
+    exit 1
+fi
+
+# Show current commit and staged changes
+echo "Current HEAD commit to be amended:"
+git log --oneline -1 HEAD
+echo
+
+echo "Staged changes that will be added to the commit:"
+git diff --cached --stat
+echo
+
+# Check if this commit exists on any remote (warning about rewriting history)
+COMMIT_HASH=$(git rev-parse HEAD)
+REMOTES_WITH_COMMIT=()
+
+while IFS= read -r remote; do
+    if git branch -r --contains "$COMMIT_HASH" | grep -q "^[[:space:]]*$remote/" 2>/dev/null; then
+        REMOTES_WITH_COMMIT+=("$remote")
+    fi
+done < <(git remote)
+
+if [[ ${#REMOTES_WITH_COMMIT[@]} -gt 0 ]]; then
+    echo "⚠️  WARNING: This commit exists on remote(s): ${REMOTES_WITH_COMMIT[*]}"
+    echo "   Amending it will rewrite history and may cause issues for other developers."
+    echo "   Consider creating a new commit instead."
+    echo
+fi
+
+read -p "Proceed with amending the last commit? (y/N): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+echo "Executing: git commit --amend -C HEAD"
 git commit --amend -C HEAD
+
+echo "✓ Last commit amended successfully!"
+
+# Show the updated commit
+echo
+echo "Updated commit:"
+git log --oneline -1 HEAD

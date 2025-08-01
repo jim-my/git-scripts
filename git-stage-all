@@ -1,0 +1,122 @@
+#!/bin/bash
+
+# git-all: Stage all changes in the working directory
+#
+# This script stages all unstaged changes including new, modified, and deleted
+# files using 'git add -A'. It provides a quick way to stage everything with
+# proper safety checks and confirmation.
+#
+# Safety features:
+# - Validates you're in a git repository
+# - Shows what will be staged before proceeding
+# - Asks for confirmation if there are many changes
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-all - Stage all changes in the working directory
+
+USAGE:
+    git all [--help] [--force]
+
+DESCRIPTION:
+    Stages all changes in the working directory using 'git add -A'.
+    This includes new files, modified files, and deleted files.
+    
+    Equivalent to 'git add -A' but with safety checks and confirmation.
+
+OPTIONS:
+    --help     Show this help message
+    --force    Skip confirmation prompt
+
+EXAMPLES:
+    # Stage all changes (with confirmation)
+    git all
+    
+    # Stage all changes without confirmation
+    git all --force
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Shows what will be staged before proceeding
+    - Asks for confirmation if there are many changes (>10 files)
+
+SEE ALSO:
+    git add -A, git add ., git status
+EOF
+}
+
+# Initialize variables
+FORCE=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --force|-f)
+            FORCE=true
+            shift
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Check if there are any changes to stage
+if git diff --quiet && git diff --cached --quiet && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
+    echo "No changes to stage. Working directory is clean."
+    exit 0
+fi
+
+# Show current status
+echo "Current repository status:"
+git status --porcelain
+
+# Count changes
+CHANGE_COUNT=$(git status --porcelain | wc -l)
+echo
+echo "Total changes to stage: $CHANGE_COUNT files"
+
+# Ask for confirmation if there are many changes and not in force mode
+if [[ "$FORCE" == false && "$CHANGE_COUNT" -gt 10 ]]; then
+    echo
+    echo "⚠️  Warning: You're about to stage $CHANGE_COUNT files."
+    echo "This includes all new, modified, and deleted files."
+    echo
+    read -p "Proceed with staging all changes? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+elif [[ "$FORCE" == false ]]; then
+    echo
+    read -p "Stage all these changes? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+fi
+
+echo
+echo "Executing: git add -A"
+git add -A
+
+echo "✓ All changes staged successfully!"
+
+# Show final status
+echo
+echo "Staged changes:"
+git diff --cached --stat

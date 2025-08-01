@@ -1,5 +1,86 @@
-#!/usr/bin/env bash
-# author: jimmy
-#   http://stackoverflow.com/questions/6245570/get-current-branch-name
-#   alternatively:
-git rev-parse --abbrev-ref HEAD
+#!/bin/bash
+
+# git-branch-current: Get the name of the current branch
+#
+# This script displays the name of the currently checked out git branch.
+# It's a simple wrapper around 'git rev-parse --abbrev-ref HEAD' with
+# proper error handling and help documentation.
+#
+# Safety features:
+# - Validates you're in a git repository
+# - Handles detached HEAD state gracefully
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-branch-current - Get the name of the current branch
+
+USAGE:
+    git branch-current [--help]
+
+DESCRIPTION:
+    Displays the name of the currently checked out git branch.
+    If in a detached HEAD state, shows the commit hash instead.
+
+OPTIONS:
+    --help    Show this help message
+
+EXAMPLES:
+    # Get current branch name
+    git branch-current
+    # Output: main
+
+    # Use in scripts
+    CURRENT_BRANCH=$(git branch-current)
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Handles detached HEAD state gracefully
+
+SEE ALSO:
+    git branch, git rev-parse --abbrev-ref HEAD
+
+Reference: http://stackoverflow.com/questions/6245570/get-current-branch-name
+EOF
+}
+
+# Parse arguments
+if [[ $# -gt 0 ]]; then
+    case $1 in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'" >&2
+            usage
+            exit 1
+            ;;
+    esac
+fi
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository" >&2
+    exit 1
+fi
+
+# Check if repository has any commits
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "Error: No commits found in repository" >&2
+    exit 1
+fi
+
+# Get current branch name
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+
+# Handle detached HEAD state
+if [[ "$BRANCH_NAME" == "HEAD" ]]; then
+    COMMIT_HASH=$(git rev-parse --short HEAD)
+    echo "Detached HEAD at $COMMIT_HASH" >&2
+    echo "$COMMIT_HASH"
+    exit 0
+fi
+
+echo "$BRANCH_NAME"
