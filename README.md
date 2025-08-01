@@ -54,17 +54,17 @@ Local                                    Remote(origin/main)              Patch_
 
 ---
 
-## 🧹 git-remove-duplicates-and-rebase
+## 🧹 git-remove-redundant-commits
 
 **Automatically clean branch history and rebase**
 
-Removes duplicate commits and cleanly rebases your branch onto a target branch. Solves the common problem of redundant commits from development workflows with cherry-picking, rebasing, and merging.
+Removes redundant commits and cleanly rebases your branch onto a target branch. Solves the common problem of redundant commits from development workflows with cherry-picking, rebasing, and merging.
 
 ### Quick Start
 ```bash
-git-remove-duplicates-and-rebase                    # Dry-run (safe preview)
-git-remove-duplicates-and-rebase --apply            # Actually clean and rebase
-git-remove-duplicates-and-rebase --onto upstream/main --apply
+git-remove-redundant-commits                    # Dry-run (safe preview)
+git-remove-redundant-commits --apply            # Actually clean and rebase
+git-remove-redundant-commits --onto upstream/main --apply
 ```
 
 ### Workflow
@@ -111,7 +111,7 @@ git show def5678 | git patch-id --stable
 ```
 
 1. **git-check-dup** identifies which commits are duplicates
-2. **git-remove-duplicates-and-rebase** uses git-check-dup internally and automatically removes them during rebase
+2. **git-remove-redundant-commits** uses git-check-dup internally and automatically removes them during rebase
 
 ### Example Workflow
 ```bash
@@ -119,10 +119,10 @@ git show def5678 | git patch-id --stable
 git-check-dup origin/main
 
 # 2. Preview the cleanup (dry-run)
-git-remove-duplicates-and-rebase --onto origin/main
+git-remove-redundant-commits --onto origin/main
 
 # 3. Actually perform the cleanup
-git-remove-duplicates-and-rebase --onto origin/main --apply
+git-remove-redundant-commits --onto origin/main --apply
 ```
 
 ---
@@ -133,7 +133,7 @@ git-remove-duplicates-and-rebase --onto origin/main --apply
 ```bash
 # You have a feature branch with duplicate commits from rebasing
 git checkout feature/my-feature
-git-remove-duplicates-and-rebase --apply
+git-remove-redundant-commits --apply
 ```
 
 ### Scenario 2: Check Before Push
@@ -141,13 +141,13 @@ git-remove-duplicates-and-rebase --apply
 # Before pushing, check if any commits already exist upstream
 git-check-dup origin/main
 # If duplicates found, clean them up
-git-remove-duplicates-and-rebase --apply
+git-remove-redundant-commits --apply
 ```
 
 ### Scenario 3: Clean PR Preparation
 ```bash
 # Prepare a clean branch for pull request
-git-remove-duplicates-and-rebase --onto origin/main --apply
+git-dedupe-and-rebase --onto origin/main --apply
 git push --force-with-lease origin feature/my-feature
 ```
 
@@ -155,7 +155,7 @@ git push --force-with-lease origin feature/my-feature
 ```bash
 # After cherry-picking commits, remove any duplicates
 git-check-dup upstream/develop
-git-remove-duplicates-and-rebase --onto upstream/develop --apply
+git-dedupe-and-rebase --onto upstream/develop --apply
 ```
 
 ---
@@ -165,7 +165,7 @@ git-remove-duplicates-and-rebase --onto upstream/develop --apply
 Both tools prioritize safety:
 
 - **git-check-dup**: Read-only operation, never modifies your repository
-- **git-remove-duplicates-and-rebase**: Creates backup branches automatically
+- **git-remove-redundant-commits**: Creates backup branches automatically
 
 ### If Something Goes Wrong
 ```bash
@@ -198,6 +198,7 @@ Both tools integrate seamlessly with Git's subcommand system and can be called a
 This repository also contains additional Git utilities for various workflows:
 
 - **`git-when-reached-branch`** - Find when a commit reached a target branch (handles merges, fast-forwards, etc.)
+- **`git-remove-from-history`** - Completely remove file/directory from all Git history (DESTRUCTIVE)
 - **`git-experiment`** - Safe experimentation sandbox with isolated branches and easy cleanup
 - **`git-stash-smart`** - Enhanced stash management with descriptive names and keyword search
 - **`git-wtf`** - Git status with enhanced branch information
