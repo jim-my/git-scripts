@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Colors for output
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No color
+
+# Defaults
+onto_branch="origin/main"
+apply=false
+
+usage() {
+    echo "Usage: git-remove-duplicates-and-rebase [--onto <branch>] [--apply]"
+    echo
+    echo "Options:"
+    echo "  --onto <branch>  Rebase onto this branch (default: origin/main)"
+    echo "  --apply          Actually perform deduplication and rebase"
+    exit 1
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --onto)
+            shift
+            onto_branch="$1"
+            ;;
+        --apply)
+            apply=true
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            usage
+            ;;
+    esac
+    shift
+done
+
+branch=$(git rev-parse --abbrev-ref HEAD)
+remote_branch="$onto_branch"
+timestamp=$(date +%Y%m%d_%H%M%S)
+backup_branch="${branch}_${timestamp}"
+
+if [[ "$apply" == true ]]; then
+    echo -e "${CYAN}[INFO] Backing up current branch to ${backup_branch}${NC}"
+    git branch "$backup_branch"
+else
+    echo -e "${YELLOW}[DRY-RUN] Would backup current branch to ${backup_branch}${NC}"
+fi
+
+echo -e "${CYAN}[INFO] Fetching remote updates...${NC}"
+git fetch origin
+
+echo -e "${CYAN}[INFO] Showing current branch graph (before):${NC}"
+git --no-pager log --oneline --graph --decorate --abbrev-commit --color -20
+
+
+# Check if remote branch exists
+if ! git rev-parse --verify --quiet "$remote_branch" >/dev/null 2>&1; then
+    echo -e "${YELLOW}[WARN] Remote branch ${remote_branch} not found.${NC}"
+    if [[ "$apply" == false ]]; then
+        echo -e "${YELLOW}[DRY-RUN] No remote branch to compare against. To rebase onto ${onto_branch} directly, run:${NC}"
+        echo
+        echo "    git rebase ${onto_branch}"
+        echo
+        exit 0
+    else
+        echo -e "${CYAN}[INFO] No remote branch to deduplicate against. Rebasing directly onto ${onto_branch}...${NC}"
+        git rebase "$onto_branch" || {
+            echo -e "${RED}[ERROR] Rebase failed. Backup branch: $backup_branch${NC}"
+            exit 1
+        }
+        echo -e "${GREEN}[SUCCESS] Rebased onto ${onto_branch}.${NC}"
+        echo -e "${GREEN}[INFO] Original branch backed up as ${backup_branch}${NC}"
+        exit 0
+    fi
+fi
+
+# --- Duplicate Detection using git-check-dup ---
+echo -e "${CYAN}[INFO] Detecting duplicate commits against ${remote_branch}${NC}"
+
+# Use git-check-dup for clean duplicate detection
+duplicates_output=$(git-check-dup --quiet "$remote_branch" 2>/dev/null || true)
+
+if [[ -n "$duplicates_output" ]]; then
+    echo -e "${YELLOW}[INFO] Duplicate commits detected (same content):${NC}"
+    echo "$duplicates_output" | while read -r local_hash remote_hash patch_id; do
+        echo "    ${local_hash:0:8} is duplicate of ${remote_hash:0:8} (patch: ${patch_id:0:8})"
+    done
+else
+    echo -e "${GREEN}[INFO] No duplicate commits detected.${NC}"
+fi
+
+# --- Dry-Run Mode (default) ---
+if [[ "$apply" == false ]]; then
+    echo -e "${YELLOW}[DRY-RUN] No changes applied. Backup branch: $backup_branch${NC}"
+    echo -e "${YELLOW}[DRY-RUN] To apply cleanup and rebase onto ${onto_branch}:${NC}"
+    echo
+    echo "    git remove-duplicates-and-rebase --onto ${onto_branch} --apply"
+    echo
+    exit 0
+fi
+
+# --- Actual Cleanup (Two-Phase Approach) ---
+# Phase 1: Remove content duplicates to avoid rebase conflicts
+# This rebases local commits onto remote, automatically dropping duplicate content
+echo -e "${CYAN}[INFO] Phase 1: Removing duplicate commits...${NC}"
+git rebase "$remote_branch" || {
+    echo -e "${RED}[ERROR] Duplicate removal rebase failed. Backup branch: $backup_branch${NC}"
+    exit 1
+}
+
+# Phase 2: Rebase cleaned commits onto target branch  
+# Now conflict-free since duplicates were removed in Phase 1
+echo -e "${CYAN}[INFO] Phase 2: Rebasing cleaned commits onto ${onto_branch}...${NC}"
+git rebase "$onto_branch" || {
+    echo -e "${RED}[ERROR] Final rebase failed. Backup branch: $backup_branch${NC}"
+    exit 1
+}
+
+echo -e "${CYAN}[INFO] Branch graph (after):${NC}"
+git --no-pager log --oneline --graph --decorate --abbrev-commit --color -20
+
+echo -e "${GREEN}[SUCCESS] Duplicates removed and rebased onto ${onto_branch}.${NC}"
+echo -e "${GREEN}[INFO] Original branch backed up as ${backup_branch}${NC}"

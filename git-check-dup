@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Simple duplicate commit checker
+# Usage: git-check-dup [-q|--quiet] [remote_branch]
+# Output: 
+#   Default: header + commit details with dates and messages
+#   Quiet:   just "local_hash remote_hash patch_id" for pipes
+
+quiet=false
+remote_branch="origin/main"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -q|--quiet)
+            quiet=true
+            ;;
+        -*)
+            echo "Usage: git-check-dup [-q|--quiet] [remote_branch]" >&2
+            exit 1
+            ;;
+        *)
+            remote_branch="$1"
+            ;;
+    esac
+    shift
+done
+
+# Check if remote branch exists
+if ! git rev-parse --verify --quiet "$remote_branch" >/dev/null 2>&1; then
+    echo "Error: Remote branch ${remote_branch} not found." >&2
+    exit 1
+fi
+
+# Find common ancestor
+merge_base=$(git merge-base HEAD "$remote_branch" 2>/dev/null || echo "$remote_branch")
+
+# Create temp files
+local_patches=$(mktemp)
+remote_patches=$(mktemp)
+
+# Get patch IDs for local commits (using for loop to avoid stdin issues)
+for hash in $(git log --pretty=format:'%H' "${merge_base}"..HEAD); do
+    patch_id=$(git show "$hash" | git patch-id --stable | cut -d' ' -f1)
+    echo "$patch_id $hash" >> "$local_patches"
+done
+
+# Get patch IDs for remote commits
+for hash in $(git log --pretty=format:'%H' "${merge_base}".."$remote_branch"); do
+    patch_id=$(git show "$hash" | git patch-id --stable | cut -d' ' -f1)
+    echo "$patch_id $hash" >> "$remote_patches"
+done
+
+# Find duplicates by joining on patch_id
+join -j 1 <(sort "$local_patches") <(sort "$remote_patches") | while read -r patch_id local_hash remote_hash; do
+    if [[ "$quiet" == "true" ]]; then
+        # Quiet mode: just the essential data for pipes
+        echo "$local_hash $remote_hash $patch_id"
+    else
+        # Default mode: header + detailed info
+        current_branch=$(git rev-parse --abbrev-ref HEAD)
+        
+        # Header line aligned with data
+        printf "%-40s %-40s %s\n" "Local" "Remote($remote_branch)" "Patch_id"
+        printf "%-40s %-40s %s\n" "$local_hash" "$remote_hash" "$patch_id"
+        
+        # Get commit details
+        local_date=$(git log -1 --pretty=format:'%ad' --date=short "$local_hash")
+        local_msg=$(git log -1 --pretty=format:'%s' "$local_hash")
+        remote_date=$(git log -1 --pretty=format:'%ad' --date=short "$remote_hash")
+        remote_msg=$(git log -1 --pretty=format:'%s' "$remote_hash")
+        
+        echo "    ${local_hash:0:8}: $local_date $local_msg"
+        echo "    ${remote_hash:0:8}: $remote_date $remote_msg"
+    fi
+done
+
+# Cleanup
+rm -f "$local_patches" "$remote_patches"
