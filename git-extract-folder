@@ -1,0 +1,162 @@
+#!/bin/bash
+
+# git-extract-folder: Extract a folder from current repository into a new local repository
+# Usage: git extract-folder <folder-path> <target-repo-path> [--remove]
+
+set -e
+
+# Function to show usage
+show_usage() {
+    cat << EOF
+Usage: git extract-folder <folder-path> <target-repo-path> [--remove]
+
+Extract a folder from current repository into a new local repository using git subtree.
+The folder and all its subfolders will be included recursively with full history.
+
+Arguments:
+  folder-path       Path to the folder to split (relative to repo root)
+  target-repo-path  Path where the new repository will be created
+
+Options:
+  --remove, -r      Remove folder from original repo after split
+  --help, -h        Show this help message
+
+Examples:
+  git extract-folder src/utils ../utils-repo
+  git extract-folder docs/api ../api-docs --remove
+EOF
+}
+
+# Default values
+REMOVE_FOLDER=false
+
+# Parse arguments
+FOLDER_PATH=""
+TARGET_REPO=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --remove|-r)
+            REMOVE_FOLDER=true
+            shift
+            ;;
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "$FOLDER_PATH" ]]; then
+                FOLDER_PATH="$1"
+            elif [[ -z "$TARGET_REPO" ]]; then
+                TARGET_REPO="$1"
+            else
+                echo "Error: Too many arguments" >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate arguments
+if [[ -z "$FOLDER_PATH" || -z "$TARGET_REPO" ]]; then
+    echo "Error: Missing required arguments" >&2
+    show_usage
+    exit 1
+fi
+
+# Check if we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    echo "Error: Not in a git repository" >&2
+    exit 1
+fi
+
+# Get repository root and current working directory
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CURRENT_DIR=$(pwd)
+
+# Convert folder path to absolute path first, then to relative path from repo root
+if [[ "$FOLDER_PATH" = /* ]]; then
+    # Already absolute path
+    ABS_FOLDER_PATH="$FOLDER_PATH"
+else
+    # Relative path from current directory
+    ABS_FOLDER_PATH="$CURRENT_DIR/$FOLDER_PATH"
+fi
+
+# Check if folder exists (using absolute path)
+if [[ ! -d "$ABS_FOLDER_PATH" ]]; then
+    echo "Error: Folder '$FOLDER_PATH' does not exist" >&2
+    exit 1
+fi
+
+# Convert to relative path from repo root
+cd "$REPO_ROOT"
+FOLDER_PATH=$(realpath --relative-to="$REPO_ROOT" "$ABS_FOLDER_PATH" 2>/dev/null || echo "$FOLDER_PATH")
+
+# Validate that the folder is within the repository
+if [[ "$FOLDER_PATH" = ../* ]] || [[ "$FOLDER_PATH" = /* ]]; then
+    echo "Error: Folder must be within the repository" >&2
+    exit 1
+fi
+
+# Convert target repo to absolute path and check early
+if [[ "$TARGET_REPO" = /* ]]; then
+    ABS_TARGET_REPO="$TARGET_REPO"
+else
+    ABS_TARGET_REPO="$CURRENT_DIR/$TARGET_REPO"
+fi
+
+# Check if target path already exists
+if [[ -e "$ABS_TARGET_REPO" ]]; then
+    echo "Error: Target path '$TARGET_REPO' already exists" >&2
+    exit 1
+fi
+
+# Create parent directory for target repo if needed
+TARGET_PARENT=$(dirname "$ABS_TARGET_REPO")
+if [[ ! -d "$TARGET_PARENT" ]]; then
+    echo "Creating parent directory: $TARGET_PARENT"
+    mkdir -p "$TARGET_PARENT"
+fi
+
+echo "Extracting '$FOLDER_PATH' into '$TARGET_REPO'..."
+
+# Create subtree split
+git subtree split --prefix="$FOLDER_PATH" -b temp-split-branch
+
+# Create target repository
+mkdir -p "$ABS_TARGET_REPO"
+cd "$ABS_TARGET_REPO"
+
+# Initialize new repository and pull content
+git init
+git pull "$REPO_ROOT" temp-split-branch
+
+# Clean up temporary branch
+cd "$REPO_ROOT"
+git branch -D temp-split-branch
+
+echo "Successfully created repository at '$ABS_TARGET_REPO'"
+
+# Remove folder from original repository if requested
+if [[ "$REMOVE_FOLDER" == true ]]; then
+    if ! git diff-index --quiet HEAD --; then
+        echo "Warning: Uncommitted changes detected. Please commit first."
+        echo "Folder extraction completed, but not removed from original repo."
+        exit 0
+    fi
+    
+    git rm -r "$FOLDER_PATH"
+    git commit -m "Remove $FOLDER_PATH (extracted into separate repository)
+
+Extracted into: $ABS_TARGET_REPO"
+    
+    echo "Removed '$FOLDER_PATH' from original repository"
+fi
+
+echo "Done! Folder '$FOLDER_PATH' extracted with full history preserved."
