@@ -2,7 +2,7 @@
 
 > A comprehensive collection of 50+ Git utility scripts solving real workflow problems
 
-[![Scripts](https://img.shields.io/badge/scripts-51+-blue.svg)](#scripts-index)
+[![Scripts](https://img.shields.io/badge/scripts-50+-blue.svg)](#scripts-index)
 [![Languages](https://img.shields.io/badge/languages-Bash%20%7C%20Ruby%20%7C%20Python-brightgreen.svg)](#)
 [![Quality](https://img.shields.io/badge/security-hardened-green.svg)](#security-features)
 
@@ -96,8 +96,6 @@ git wtf                          # Enhanced status
 - **git-move-before** - Reorder commits in history
 - **git-split-amended-commit** - Split accidentally merged commits
 
-### 🔧 **Development Tools**
-- **git-review-phpstan** - PHP static analysis integration
 
 ## 🛡️ Security Features
 
@@ -244,7 +242,7 @@ Some scripts work better together:
 ## Scripts Index
 
 <details>
-<summary>Complete list of all 51 scripts (click to expand)</summary>
+<summary>Complete list of all 50 scripts (click to expand)</summary>
 
 ### A-D
 - git-amend
@@ -272,7 +270,6 @@ Some scripts work better together:
 - git-find_file
 - git-icdiff
 - git-incoming
-- git-incoming.rb
 - git-log-merges.rb
 - git-log-search_all_commits
 - git-ls-by-date.sh
@@ -288,7 +285,6 @@ Some scripts work better together:
 - git-remove-from-history
 - git-remove-redundant-commits
 - git-reup
-- git-review-phpstan
 - git-search-in-each-commit
 - git-show-merges
 - git-show-vim
