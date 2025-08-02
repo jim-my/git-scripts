@@ -1,16 +1,151 @@
 #!/bin/bash
-# original credit to http://stackoverflow.com/questions/372506/how-can-i-search-git-branches-for-a-file-or-directory/372654#372654
-# usage: "gitfind.sh <regex>"
+set -euo pipefail
 
-LOC=refs/remotes/origin
-#LOC=refs/heads  # to search local branches only
+# =============================================================================
+# git-find_file - Find files across Git branches
+# =============================================================================
+#
+# PURPOSE:
+#   Search for files matching a pattern across all remote branches.
+#   Useful for finding where a specific file exists in different branches.
+#
+# USAGE:
+#   git-find_file <pattern> [--local]
+#
+# EXAMPLES:
+#   git-find_file "config.yml"        # Find config.yml in remote branches
+#   git-find_file "*.py" --local      # Find Python files in local branches
+#   git-find_file "test_.*\.py"       # Find test files using regex
+#
+# Original credit: http://stackoverflow.com/questions/372506/how-can-i-search-git-branches-for-a-file-or-directory/372654#372654
+# =============================================================================
 
-for branch in `git for-each-ref --format="%(refname)" $LOC`; do
-  found=$(git ls-tree -r --name-only $branch | grep "$1")
-  if [ $? -eq 0 ]; then
-    # echo ${branch#$LOC/}:; echo "  $found"
-    for f in $found; do
-        echo ${branch#$LOC/}:$f
+# Usage function
+usage() {
+    cat << 'EOF'
+Usage: git-find_file <pattern> [--local]
+
+Find files matching a pattern across Git branches.
+
+Arguments:
+  pattern    File pattern or regex to search for
+
+Options:
+  --local    Search local branches only (default: remote branches)
+  --help     Show this help message
+
+Examples:
+  git-find_file "config.yml"        # Find config.yml in remote branches
+  git-find_file "*.py" --local      # Find Python files in local branches
+  git-find_file "test_.*\.py"       # Find test files using regex
+
+Note: Pattern is treated as a grep regex, so special characters need escaping.
+EOF
+    exit 1
+}
+
+# Error handling function
+error_exit() {
+    local message="$1"
+    local exit_code="${2:-1}"
+    echo "Error: $message" >&2
+    exit "$exit_code"
+}
+
+# Check if we're in a git repository
+check_git_repo() {
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        error_exit "Not in a git repository"
+    fi
+}
+
+# Parse arguments
+parse_arguments() {
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+    
+    PATTERN=""
+    SEARCH_LOCAL=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --local)
+                SEARCH_LOCAL=true
+                ;;
+            --help|-h)
+                usage
+                ;;
+            -*)
+                error_exit "Unknown option: $1. Use --help for usage information."
+                ;;
+            *)
+                if [[ -z "$PATTERN" ]]; then
+                    PATTERN="$1"
+                else
+                    error_exit "Multiple patterns not supported. Use --help for usage information."
+                fi
+                ;;
+        esac
+        shift
     done
-  fi
-done
+    
+    if [[ -z "$PATTERN" ]]; then
+        error_exit "Pattern is required. Use --help for usage information."
+    fi
+}
+
+# Main search function
+search_files() {
+    local pattern="$1"
+    local search_local="$2"
+    
+    # Set location based on search type
+    local loc
+    if [[ "$search_local" == true ]]; then
+        loc="refs/heads"
+        echo "Searching local branches for pattern: $pattern"
+    else
+        loc="refs/remotes/origin"
+        echo "Searching remote branches for pattern: $pattern"
+    fi
+    
+    local found_any=false
+    
+    # Use process substitution to avoid issues with pipes and subshells
+    while IFS= read -r branch; do
+        if [[ -z "$branch" ]]; then
+            continue
+        fi
+        
+        # Search for files in this branch
+        local found_files
+        if found_files=$(git ls-tree -r --name-only "$branch" 2>/dev/null | grep "$pattern" 2>/dev/null); then
+            found_any=true
+            local branch_name
+            branch_name="${branch#$loc/}"
+            
+            # Print each found file with branch name
+            while IFS= read -r file; do
+                if [[ -n "$file" ]]; then
+                    echo "$branch_name:$file"
+                fi
+            done <<< "$found_files"
+        fi
+    done < <(git for-each-ref --format="%(refname)" "$loc" 2>/dev/null)
+    
+    if [[ "$found_any" == false ]]; then
+        echo "No files found matching pattern: $pattern"
+        exit 1
+    fi
+}
+
+# Main function
+main() {
+    parse_arguments "$@"
+    check_git_repo
+    search_files "$PATTERN" "$SEARCH_LOCAL"
+}
+
+# Run main function with all arguments
+main "$@"

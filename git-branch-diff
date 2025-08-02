@@ -1,12 +1,127 @@
 #!/usr/bin/env bash
-# author: jimmy
-os=`uname`
+set -euo pipefail
 
-if [[ $os == 'Darwin' ]]; then
-    #cmd="mvim -d <(git log $1 --oneline) <(git log $2 --oneline)"
-    vim -d <(git log $1 --oneline) <(git log $2 --oneline)
-    # mvim -d <(git log $1 --oneline) <(git log $2 --oneline)
-else
-    #cmd="vim -g -d <(git log $1 --oneline) <(git log $2 --oneline)"
-    vim -g -d <(git log $1 --oneline) <(git log $2 --oneline)
-fi
+# =============================================================================
+# git-branch-diff - Visual diff of commit logs between branches
+# =============================================================================
+#
+# PURPOSE:
+#   Opens vim in diff mode to visually compare commit logs between two branches.
+#   Useful for seeing differences in commit history at a glance.
+#
+# USAGE:
+#   git-branch-diff [branch1] [branch2]
+#   git-branch-diff [branch]           # Compare branch with current HEAD
+#
+# EXAMPLES:
+#   git-branch-diff main feature       # Compare main vs feature branch
+#   git-branch-diff origin/main        # Compare current branch vs origin/main
+#   git-branch-diff                    # Compare HEAD vs origin/main (default)
+#
+# =============================================================================
+
+# Usage function
+usage() {
+    cat << 'EOF'
+Usage: git-branch-diff [branch1] [branch2]
+
+Visual diff of commit logs between branches using vim.
+
+Arguments:
+  branch1    First branch to compare (default: HEAD)
+  branch2    Second branch to compare (default: origin/main)
+
+Examples:
+  git-branch-diff main feature       # Compare main vs feature branch
+  git-branch-diff origin/main        # Compare HEAD vs origin/main
+  git-branch-diff                    # Compare HEAD vs origin/main
+
+Requirements:
+  - vim editor
+  - Git repository
+EOF
+    exit 1
+}
+
+# Error handling function
+error_exit() {
+    local message="$1"
+    local exit_code="${2:-1}"
+    echo "Error: $message" >&2
+    exit "$exit_code"
+}
+
+# Check if we're in a git repository
+check_git_repo() {
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        error_exit "Not in a git repository"
+    fi
+}
+
+# Validate branch exists
+validate_branch() {
+    local branch="$1"
+    if ! git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        error_exit "Branch '$branch' not found"
+    fi
+}
+
+# Parse arguments and set defaults
+parse_arguments() {
+    case $# in
+        0)
+            BRANCH1="HEAD"
+            BRANCH2="origin/main"
+            ;;
+        1)
+            if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+                usage
+            fi
+            BRANCH1="HEAD"
+            BRANCH2="$1"
+            ;;
+        2)
+            BRANCH1="$1"
+            BRANCH2="$2"
+            ;;
+        *)
+            error_exit "Too many arguments. Use --help for usage information."
+            ;;
+    esac
+}
+
+# Main function
+main() {
+    parse_arguments "$@"
+    check_git_repo
+    
+    # Validate branches exist
+    validate_branch "$BRANCH1"
+    validate_branch "$BRANCH2"
+    
+    # Check if branches are the same
+    local branch1_commit branch2_commit
+    branch1_commit=$(git rev-parse "$BRANCH1")
+    branch2_commit=$(git rev-parse "$BRANCH2")
+    
+    if [[ "$branch1_commit" == "$branch2_commit" ]]; then
+        error_exit "Both branches point to the same commit"
+    fi
+    
+    # Detect OS and set vim options
+    local os
+    os=$(uname)
+    
+    echo "Comparing commit logs: $BRANCH1 vs $BRANCH2"
+    echo "Press :q to exit vim when done."
+    
+    # Use appropriate vim options based on OS
+    if [[ "$os" == 'Darwin' ]]; then
+        vim -d <(git log "$BRANCH1" --oneline) <(git log "$BRANCH2" --oneline)
+    else
+        vim -g -d <(git log "$BRANCH1" --oneline) <(git log "$BRANCH2" --oneline)
+    fi
+}
+
+# Run main function with all arguments
+main "$@"

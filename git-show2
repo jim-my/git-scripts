@@ -1,18 +1,119 @@
 #!/usr/bin/env ruby
 
-if ARGV.delete('-w')
+# =============================================================================
+# git-show2 - Enhanced git show with improved diff visualization
+# =============================================================================
+#
+# PURPOSE:
+#   Shows changes in a commit using icdiff for better side-by-side visualization.
+#   Provides enhanced diff display compared to standard git show.
+#
+# USAGE:
+#   git-show2 [commit] [-w] [--help]
+#
+# EXAMPLES:
+#   git-show2                    # Show changes in HEAD
+#   git-show2 abc123             # Show changes in specific commit
+#   git-show2 -w                 # Ignore whitespace changes
+#
+# REQUIREMENTS:
+#   - icdiff (install with: pip install icdiff)
+#
+# =============================================================================
+
+require 'shellwords'
+
+def usage
+  puts <<~EOF
+    Usage: git-show2 [commit] [-w] [--help]
+    
+    Enhanced git show with improved diff visualization using icdiff.
+    
+    Arguments:
+      commit    Git commit to show (default: HEAD)
+    
+    Options:
+      -w        Ignore whitespace changes
+      --help    Show this help message
+    
+    Examples:
+      git-show2                    # Show changes in HEAD
+      git-show2 abc123             # Show changes in specific commit  
+      git-show2 -w                 # Ignore whitespace changes
+    
+    Requirements:
+      - icdiff (install with: pip install icdiff)
+  EOF
+  exit 1
+end
+
+def error_exit(message, exit_code = 1)
+  STDERR.puts "Error: #{message}"
+  exit exit_code
+end
+
+def check_git_repo
+  unless system('git rev-parse --git-dir >/dev/null 2>&1')
+    error_exit('Not in a git repository')
+  end
+end
+
+def check_dependencies
+  unless system('which icdiff >/dev/null 2>&1')
+    error_exit('icdiff not found. Install with: pip install icdiff')
+  end
+end
+
+def validate_commit(commit)
+  unless system("git rev-parse --verify #{commit.shellescape} >/dev/null 2>&1")
+    error_exit("Commit '#{commit}' not found")
+  end
+end
+
+# Parse arguments
+ignore_space = ''
+commit = 'HEAD'
+
+ARGV.each do |arg|
+  case arg
+  when '-w'
     ignore_space = '-w'
-else
-    ignore_space = ''
+  when '--help', '-h'
+    usage
+  when /^-/
+    error_exit("Unknown option: #{arg}. Use --help for usage information.")
+  else
+    commit = arg
+  end
 end
 
-# '--' in git is to separate command and file:
-commit = ARGV.shift || 'HEAD'
+# Handle special case where commit is '--' (git separator)
 if commit == '--'
-    ARGV.unshift
-    commit = 'HEAD'
+  commit = 'HEAD'
 end
 
-cmd = "git difftool #{ignore_space} --no-prompt --extcmd icdiff #{commit}^ #{commit} | less -r"
-puts "> #{cmd}"
-system cmd
+# Safety checks
+check_git_repo
+check_dependencies
+validate_commit(commit)
+
+# Build and execute command safely
+begin
+  # Use array form of system to avoid shell injection
+  cmd_args = ['git', 'difftool', ignore_space, '--no-prompt', '--extcmd', 'icdiff', "#{commit}^", commit].reject(&:empty?)
+  
+  puts "> #{cmd_args.join(' ')}"
+  
+  # Execute with proper error handling
+  success = system(*cmd_args)
+  
+  # Check if git difftool succeeded
+  unless success
+    error_exit('git difftool command failed')
+  end
+rescue Interrupt
+  puts "\nInterrupted by user"
+  exit 130
+rescue => e
+  error_exit("Unexpected error: #{e.message}")
+end
