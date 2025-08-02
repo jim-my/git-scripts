@@ -372,14 +372,25 @@ perform_removal() {
     
     # Store remote configurations before git-filter-repo removes them
     local remotes_backup=$(mktemp)
+    local tracking_backup=$(mktemp)
     git remote -v > "$remotes_backup" 2>/dev/null || true
+    
+    # Store branch tracking configurations
+    local current_branch=$(git branch --show-current)
+    if [[ -n "$current_branch" ]]; then
+        {
+            echo "current_branch=$current_branch"
+            git config --get "branch.${current_branch}.remote" 2>/dev/null && echo "remote=$(git config --get "branch.${current_branch}.remote")" || true
+            git config --get "branch.${current_branch}.merge" 2>/dev/null && echo "merge=$(git config --get "branch.${current_branch}.merge")" || true
+        } > "$tracking_backup"
+    fi
     
     # Use git-filter-repo to remove the path
     if ! git filter-repo --path "$path" --invert-paths --force; then
         echo -e "${RED}[ERROR] git-filter-repo failed${NC}"
         echo -e "${CYAN}[INFO] You can recover using backup branch: $BACKUP_BRANCH${NC}"
         echo "Recovery command: git reset --hard $BACKUP_BRANCH"
-        rm -f "$remotes_backup"
+        rm -f "$remotes_backup" "$tracking_backup"
         error_exit "History rewriting operation failed"
     fi
     
@@ -405,7 +416,22 @@ perform_removal() {
         echo -e "${YELLOW}[WARN] No remote configurations to restore${NC}"
     fi
     
-    rm -f "$remotes_backup"
+    # Restore branch tracking configurations
+    echo -e "${CYAN}[INFO] Restoring branch tracking configurations...${NC}"
+    if [[ -s "$tracking_backup" ]]; then
+        source "$tracking_backup"
+        if [[ -n "${remote:-}" ]] && [[ -n "${merge:-}" ]] && [[ -n "${current_branch:-}" ]]; then
+            git config "branch.${current_branch}.remote" "$remote" 2>/dev/null || true
+            git config "branch.${current_branch}.merge" "$merge" 2>/dev/null || true
+            echo -e "${GREEN}[✓] Branch tracking restored: ${current_branch} -> ${remote}/${merge#refs/heads/}${NC}"
+        else
+            echo -e "${YELLOW}[WARN] No branch tracking configuration to restore${NC}"
+        fi
+    else
+        echo -e "${YELLOW}[WARN] No branch tracking backup found${NC}"
+    fi
+    
+    rm -f "$remotes_backup" "$tracking_backup"
     echo -e "${GREEN}[✓] Path removed from history${NC}"
 }
 
@@ -524,9 +550,10 @@ main() {
     echo -e "${YELLOW}Next steps:${NC}"
     echo "1. Verify the removal: git log --all --full-history -- '$TARGET_PATH'"
     echo "2. Check remotes are restored: git remote -v"
-    echo "3. If satisfied, force-push: git push --force-with-lease --all"
-    echo "4. Force-push tags: git push --force-with-lease --tags"
-    echo "5. Notify team members to re-clone repository"
+    echo "3. Check branch tracking is restored: git status"
+    echo "4. If satisfied, force-push: git push --force-with-lease --all"
+    echo "5. Force-push tags: git push --force-with-lease --tags"
+    echo "6. Notify team members to re-clone repository"
     echo
     echo -e "${CYAN}Backup branch:${NC} $BACKUP_BRANCH"
     echo -e "${CYAN}Recovery command:${NC} git reset --hard $BACKUP_BRANCH"
