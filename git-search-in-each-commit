@@ -1,61 +1,397 @@
 #!/usr/bin/env ruby
 # encoding: utf-8
+
+# =============================================================================
+# git-search-in-each-commit - Search through commit history with secure export
+# =============================================================================
 #
-# Send last 300 commits changes to individual file in /tmp/git, so then I can just use grep to find particular
-# changes easily.
+# PURPOSE:
+#   Export individual commit diffs to separate files for easy searching.
+#   Solves the "contains pattern" search problem that git's built-in tools don't handle well.
 #
-# Usage:
-# E.g.
-# # less twig files changes one by one with color:
-# ag 'diff.*twig' -l | xargs -I{} cdiff {} | less # find all files which contains 'twig', when color-diff(using less -R) them one by one
+# WHY THIS SCRIPT EXISTS:
+#   Git's built-in search commands have limitations:
+#   - `git log -S "pattern"` only finds commits that ADD/REMOVE the pattern
+#   - `git log --grep "pattern"` only searches commit messages, not content
+#   - `git grep "pattern"` only searches current HEAD, not history
+#   - `git rev-list + git grep` is extremely slow for many commits
 #
+#   This script fills the gap by allowing you to:
+#   - Find commits that CONTAIN a pattern (not just add/remove it)
+#   - Try multiple different search patterns quickly
+#   - Use powerful external tools (grep, ag, rg) with full regex support
+#   - Persist search results for repeated exploration
+#
+# WHEN TO USE THIS vs GIT COMMANDS:
+#   Use this script when you need to:
+#   ✅ Search for commits that contain specific text/patterns
+#   ✅ Try multiple search terms on the same commit set
+#   ✅ Use advanced regex or fuzzy search tools
+#   ✅ Export diffs for external analysis tools
+#
+#   Use git commands when you need to:
+#   ❌ Find when code was added/removed: `git log -S "pattern"`
+#   ❌ Search commit messages: `git log --grep "pattern"`
+#   ❌ Search current files only: `git grep "pattern"`
+#
+# ALGORITHM CHOICES:
+#   - individual: Export all commits to files (best for multiple keyword searches)
+#   - stream: Search in memory, export only matches (fastest for single keyword)
+#   - interactive: Prompt for patterns, show matches (best for exploration)
+#
+# USAGE:
+#   git-search-in-each-commit [file] [options]
+#
+# EXAMPLES:
+#   git-search-in-each-commit                           # Export all recent commits
+#   git-search-in-each-commit myfile.rb                # Export commits affecting specific file
+#   git-search-in-each-commit --keyword "bug fix"      # Export commits containing keyword
+#   git-search-in-each-commit --since "2024-01-01"     # Export commits since date
+#
+#   # Then search the exported files:
+#   grep -r "TODO" /tmp/git-search-*/
+#   ag "performance.*issue" /tmp/git-search-*/
+#   rg -i "security" /tmp/git-search-*/
+#
+# =============================================================================
 
 require 'shellwords'
-require "optimist"
-require "awesome_print"
+require 'optimist'
 require 'date'
+require 'tmpdir'
+require 'fileutils'
 
-NAME = File.basename $0
-
-today = Date.today
-opts = Optimist::options do
-    opt :verbose, "Verbose", :short => :v             # flag    --verbose, default false
-    opt :file, "File name", :type => :string, :default => '-'
-    opt :max_commits, "max commits to search", :type => :int   # string  --name <s>, default nil
-    # opt :profile, "profile name", :type => :string
-    opt :from, "date from", :type => :string
-    opt :to, "date to", :type => :string
-    opt :date_back, "date back(days)", :type => :int, :default => 7
-    opt :keyword, "Until keyword found", :type => :string
+# Enhanced error handling
+def error_exit(message, exit_code = 1)
+  STDERR.puts "Error: #{message}"
+  exit exit_code
 end
 
-# if opts[:profile]
-#     profile = "#{Dir.home}/.config/#{NAME}/#{opts[:profile]}"
-#     profile_content = File.read profile
-#     profile = Json.parse(profile_content)
-#     opts.merge! profile
-# end
-
-# If file not given, then all commits
-file = ARGV.shift
-MAX_COMMITS = 30000
-
-opts[:to] = opts[:to] || today
-opts[:from] = opts[:from] || (opts[:to] - opts[:date_back])
-
-`git log --all --after="#{opts[:from]} 00:00" --before="#{opts[:to]} 23:59" --pretty='format:%h,%cd' --date=format:'%Y.%m.%d_%H:%M:%S' #{file}`.strip.to_s.split("\n").each_with_index do |commit_with_date, index|
-    commit, date = commit_with_date.split(',')
-    cmd = "mkdir -p /tmp/git && git show #{commit} -- #{file} | tee /tmp/git/#{'%05d' % index}-#{commit}-#{date}"
-    cmd += " | grep #{opts[:keyword].shellescape}" if opts[:keyword]
-    puts cmd
-    ok = system cmd
-
-    break if ok && index >= MAX_COMMITS
+def check_git_repo
+  unless system('git rev-parse --git-dir >/dev/null 2>&1')
+    error_exit('Not in a git repository')
+  end
 end
 
-puts "\nTime from:\t#{opts[:from]}\nTime to:\t#{opts[:to]}"
-# cmd = " xargs git -c color.ui=always show | grep #{pattern.shellescape}"
-# puts cmd
-# system cmd
+def validate_date(date_str, field_name)
+  return nil if date_str.nil?
+  
+  begin
+    Date.parse(date_str.to_s)
+  rescue ArgumentError
+    error_exit("Invalid #{field_name} date format: #{date_str}. Use YYYY-MM-DD format.")
+  end
+end
 
-puts "Search /tmp/git/ for anything you want"
+def sanitize_filename(str)
+  # Remove dangerous characters and limit length
+  str.gsub(/[^\w\-_.]/, '_')[0...50]
+end
+
+# Improved algorithm options
+class GitSearchAlgorithm
+  def initialize(options)
+    @options = options
+    @temp_dir = Dir.mktmpdir('git-search-')
+    @exported_count = 0
+    @cleanup_on_exit = options[:cleanup] != false
+    
+    # Only register cleanup for streaming/interactive modes or if explicitly requested
+    if @cleanup_on_exit && (options[:algorithm] == 'stream' || options[:algorithm] == 'interactive')
+      at_exit { cleanup }
+      trap('INT') { cleanup; exit(130) }
+      trap('TERM') { cleanup; exit(143) }
+    else
+      # For individual export, keep files for manual searching
+      trap('INT') { exit(130) }
+      trap('TERM') { exit(143) }
+    end
+    
+    puts "Using temp directory: #{@temp_dir}"
+  end
+  
+  def cleanup
+    if @temp_dir && Dir.exist?(@temp_dir)
+      puts "Cleaning up temp directory: #{@temp_dir}"
+      FileUtils.rm_rf(@temp_dir)
+    end
+  end
+  
+  # Algorithm 1: Individual file export (original approach, but secure)
+  def export_individual_commits(file_path = nil)
+    puts "Exporting individual commit diffs..."
+    
+    commits = get_commits(file_path)
+    
+    if commits.empty?
+      puts "No commits found in the specified range"
+      return
+    end
+    
+    puts "Found #{commits.size} commits to process"
+    
+    commits.each_with_index do |commit_info, index|
+      break if @options[:max_commits] && index >= @options[:max_commits]
+      
+      commit_hash, date_str = commit_info
+      export_single_commit(commit_hash, date_str, index, file_path)
+    end
+    
+    puts "\nExported #{@exported_count} commits to: #{@temp_dir}"
+    puts "\nSearch examples:"
+    puts "  grep -r 'pattern' '#{@temp_dir}/'"
+    puts "  ag 'pattern' '#{@temp_dir}'"
+    puts "  rg 'pattern' '#{@temp_dir}'"
+    puts "\nDirectory will persist until system cleanup or manual removal:"  
+    puts "  rm -rf '#{@temp_dir}'"
+  end
+  
+  # Algorithm 2: Streaming search (more efficient for keyword searches)
+  def stream_search(file_path = nil)
+    return export_individual_commits(file_path) unless @options[:keyword]
+    
+    puts "Streaming search for keyword: #{@options[:keyword]}"
+    
+    matches = []
+    commits = get_commits(file_path)
+    
+    commits.each_with_index do |commit_info, index|
+      break if @options[:max_commits] && index >= @options[:max_commits]
+      
+      commit_hash, date_str = commit_info
+      
+      # Get commit diff and search in memory
+      diff_content = get_commit_diff(commit_hash, file_path)
+      
+      if diff_content.include?(@options[:keyword])
+        matches << {
+          commit: commit_hash,
+          date: date_str,
+          content: diff_content
+        }
+        
+        puts "✓ Found match in #{commit_hash} (#{date_str})"
+        
+        # Optionally still export matches
+        export_single_commit(commit_hash, date_str, matches.size - 1, file_path)
+      end
+    end
+    
+    puts "\nFound #{matches.size} matching commits"
+    puts "Exported matches to: #{@temp_dir}" if matches.any?
+  end
+  
+  # Algorithm 3: Interactive search (best user experience)
+  def interactive_search(file_path = nil)
+    puts "Interactive search mode"
+    puts "Enter search patterns (empty line to finish):"
+    
+    patterns = []
+    while true
+      print "> "
+      pattern = STDIN.gets&.chomp
+      break if pattern.nil? || pattern.empty?
+      patterns << pattern
+    end
+    
+    return export_individual_commits(file_path) if patterns.empty?
+    
+    puts "Searching for patterns: #{patterns.join(', ')}"
+    
+    commits = get_commits(file_path)
+    matches = {}
+    
+    commits.each_with_index do |commit_info, index|
+      break if @options[:max_commits] && index >= @options[:max_commits]
+      
+      commit_hash, date_str = commit_info
+      diff_content = get_commit_diff(commit_hash, file_path)
+      
+      patterns.each do |pattern|
+        if diff_content.match?(Regexp.new(pattern, Regexp::IGNORECASE))
+          matches[commit_hash] ||= {
+            date: date_str,
+            content: diff_content,
+            patterns: []
+          }
+          matches[commit_hash][:patterns] << pattern
+        end
+      end
+    end
+    
+    puts "\nFound #{matches.size} commits with matching patterns"
+    
+    matches.each_with_index do |(commit_hash, info), index|
+      puts "#{index + 1}. #{commit_hash} (#{info[:date]}) - patterns: #{info[:patterns].join(', ')}"
+      export_single_commit(commit_hash, info[:date], index, file_path)
+    end
+  end
+  
+  private
+  
+  def get_commits(file_path)
+    # Build git log command securely
+    git_cmd = ['git', 'log', '--all', '--pretty=format:%h,%ci']
+    
+    # Add date filters
+    if @options[:since]
+      git_cmd += ['--since', @options[:since].to_s]
+    end
+    
+    if @options[:until]
+      git_cmd += ['--until', @options[:until].to_s]
+    end
+    
+    # Add file path if specified
+    if file_path && !file_path.empty? && file_path != '-'
+      git_cmd += ['--', file_path]
+    end
+    
+    # Execute safely and parse results
+    output = `#{git_cmd.shelljoin}`.strip
+    
+    unless $?.success?
+      error_exit("git log command failed")
+    end
+    
+    output.split("\n").map do |line|
+      parts = line.split(',', 2)
+      next nil if parts.size != 2
+      
+      [parts[0].strip, parts[1].strip]
+    end.compact
+  end
+  
+  def get_commit_diff(commit_hash, file_path)
+    git_cmd = ['git', 'show', commit_hash]
+    
+    if file_path && !file_path.empty? && file_path != '-'
+      git_cmd += ['--', file_path]
+    end
+    
+    output = `#{git_cmd.shelljoin}`
+    
+    unless $?.success?
+      STDERR.puts "Warning: Failed to get diff for commit #{commit_hash}"
+      return ""
+    end
+    
+    output
+  end
+  
+  def export_single_commit(commit_hash, date_str, index, file_path)
+    # Sanitize all components for filename
+    safe_commit = sanitize_filename(commit_hash)
+    safe_date = sanitize_filename(date_str.gsub(/[:\s]/, '_'))
+    
+    filename = sprintf("%05d-%s-%s.diff", index, safe_commit, safe_date)
+    filepath = File.join(@temp_dir, filename)
+    
+    # Get commit content securely
+    diff_content = get_commit_diff(commit_hash, file_path)
+    
+    # Apply keyword filter if specified
+    if @options[:keyword]
+      unless diff_content.include?(@options[:keyword])
+        return false  # Skip this commit
+      end
+    end
+    
+    # Write to secure temp file
+    begin
+      File.write(filepath, diff_content)
+      @exported_count += 1
+      
+      if @options[:verbose]
+        puts "Exported: #{filename}"
+      end
+      
+      return true
+    rescue => e
+      STDERR.puts "Warning: Failed to write #{filename}: #{e.message}"
+      return false
+    end
+  end
+end
+
+# Main execution
+def main
+  # Improved option parsing
+  opts = Optimist::options do
+    banner <<~EOF
+      git-search-in-each-commit - Search through commit history with secure export
+      
+      Usage: git-search-in-each-commit [file] [options]
+      
+      Examples:
+        git-search-in-each-commit                           # Export all commits
+        git-search-in-each-commit myfile.rb                # Export commits affecting specific file
+        git-search-in-each-commit --keyword "bug fix"      # Export commits containing keyword
+        git-search-in-each-commit --since "2024-01-01"     # Export commits since date
+      
+      Options:
+    EOF
+    
+    opt :verbose, "Verbose output", short: :v
+    opt :max_commits, "Maximum commits to process", type: :int, default: 1000
+    opt :since, "Start date (YYYY-MM-DD)", type: :string
+    opt :until, "End date (YYYY-MM-DD)", type: :string  
+    opt :keyword, "Search for keyword in diffs", type: :string
+    opt :algorithm, "Search algorithm (individual|stream|interactive)", 
+        type: :string, default: 'individual'
+    opt :days_back, "Days back from today", type: :int, default: 7
+    opt :cleanup, "Auto-cleanup temp directory on exit", default: false
+  end
+  
+  # Validate environment
+  check_git_repo
+  
+  # Process date options
+  if !opts[:since] && !opts[:until]
+    # Use days_back default
+    opts[:until] = Date.today
+    opts[:since] = opts[:until] - opts[:days_back]
+  end
+  
+  # Validate dates
+  validate_date(opts[:since], 'since') if opts[:since]
+  validate_date(opts[:until], 'until') if opts[:until]
+  
+  # Get file argument
+  file_path = ARGV.shift
+  
+  # Validate algorithm choice
+  unless %w[individual stream interactive].include?(opts[:algorithm])
+    error_exit("Invalid algorithm. Choose: individual, stream, or interactive")
+  end
+  
+  puts "Git Search Configuration:"
+  puts "  Algorithm: #{opts[:algorithm]}"
+  puts "  Since: #{opts[:since]}" if opts[:since]
+  puts "  Until: #{opts[:until]}" if opts[:until]
+  puts "  File: #{file_path || 'all files'}"
+  puts "  Keyword: #{opts[:keyword]}" if opts[:keyword]
+  puts "  Max commits: #{opts[:max_commits]}"
+  puts
+  
+  # Execute chosen algorithm
+  search = GitSearchAlgorithm.new(opts)
+  
+  case opts[:algorithm]
+  when 'individual'
+    search.export_individual_commits(file_path)
+  when 'stream'
+    search.stream_search(file_path)
+  when 'interactive'
+    search.interactive_search(file_path)
+  end
+  
+rescue Interrupt
+  puts "\nInterrupted by user"
+  exit 130
+rescue => e
+  error_exit("Unexpected error: #{e.message}")
+end
+
+# Run main function
+main if __FILE__ == $0
