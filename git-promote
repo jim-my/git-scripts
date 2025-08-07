@@ -26,7 +26,7 @@ DESCRIPTION:
     This involves:
     1. Pushing the branch to the remote (if not already there)
     2. Setting up tracking configuration between local and remote branch
-    
+
     This is useful for converting a local-only branch into a proper feature branch
     that tracks a remote branch.
 
@@ -40,10 +40,10 @@ OPTIONS:
 EXAMPLES:
     # Promote current branch to origin
     git promote
-    
+
     # Promote current branch to specific remote
     git promote upstream
-    
+
     # Promote without confirmation
     git promote --force
 

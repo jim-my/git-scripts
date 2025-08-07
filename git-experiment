@@ -44,7 +44,7 @@ class GitExperiment:
         self.experiment_dir.mkdir(exist_ok=True)
         self.config_file = self.experiment_dir / 'experiments.json'
         self.load_config()
-    
+
     def load_config(self):
         """Load experiment configuration"""
         if self.config_file.exists():
@@ -52,19 +52,19 @@ class GitExperiment:
                 self.config = json.load(f)
         else:
             self.config = {'experiments': {}, 'current': None}
-    
+
     def save_config(self):
         """Save experiment configuration"""
         with open(self.config_file, 'w') as f:
             json.dump(self.config, f, indent=2)
-    
+
     def run_git(self, cmd, check=True, capture_output=True):
         """Run git command safely"""
         try:
             result = subprocess.run(
-                ['git'] + cmd, 
-                check=check, 
-                capture_output=capture_output, 
+                ['git'] + cmd,
+                check=check,
+                capture_output=capture_output,
                 text=True
             )
             return result.stdout.strip() if capture_output else None
@@ -73,15 +73,15 @@ class GitExperiment:
                 raise GitExperimentError(f"Git command failed: {' '.join(cmd)}\n{e.stderr}")
             else:
                 raise GitExperimentError(f"Git command failed: {' '.join(cmd)}")
-    
+
     def get_current_branch(self):
         """Get current branch name"""
         return self.run_git(['branch', '--show-current'])
-    
+
     def get_repo_root(self):
         """Get repository root directory"""
         return self.run_git(['rev-parse', '--show-toplevel'])
-    
+
     def is_clean_working_tree(self):
         """Check if working tree is clean"""
         try:
@@ -89,17 +89,17 @@ class GitExperiment:
             return True
         except GitExperimentError:
             return False
-    
+
     def start_experiment(self, name):
         """Start a new experiment"""
         if not name or not name.replace('-', '').replace('_', '').isalnum():
             raise GitExperimentError("Experiment name must be alphanumeric (with - or _)")
-        
+
         # Check if already in an experiment
         current_branch = self.get_current_branch()
         if current_branch.startswith('experiment/'):
             raise GitExperimentError(f"Already in experiment: {current_branch[11:]}")
-        
+
         # Check if experiment already exists
         experiment_branch = f"experiment/{name}"
         try:
@@ -107,11 +107,11 @@ class GitExperiment:
             raise GitExperimentError(f"Experiment '{name}' already exists")
         except GitExperimentError:
             pass  # Good, experiment doesn't exist
-        
+
         # Save current state
         original_branch = current_branch
         repo_root = self.get_repo_root()
-        
+
         # Stash any uncommitted changes
         stash_created = False
         if not self.is_clean_working_tree():
@@ -119,10 +119,10 @@ class GitExperiment:
             self.run_git(['stash', 'push', '-m', stash_message])
             stash_created = True
             print(f"📦 Stashed uncommitted changes")
-        
+
         # Create experiment branch
         self.run_git(['checkout', '-b', experiment_branch])
-        
+
         # Record experiment
         self.config['experiments'][name] = {
             'branch': experiment_branch,
@@ -134,29 +134,29 @@ class GitExperiment:
         }
         self.config['current'] = name
         self.save_config()
-        
+
         print(f"🧪 Started experiment '{name}'")
         print(f"   Original branch: {original_branch}")
         print(f"   Experiment branch: {experiment_branch}")
         print(f"   Ready to experiment safely!")
-    
+
     def save_progress(self, message=None):
         """Save progress in current experiment"""
         current = self.get_current_experiment()
         if not current:
             raise GitExperimentError("Not in an experiment")
-        
+
         if self.is_clean_working_tree():
             print("No changes to save")
             return
-        
+
         # Create commit with progress
         if not message:
             message = f"Experiment progress - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
+
         self.run_git(['add', '.'])
         self.run_git(['commit', '-m', f"experiment: {message}"])
-        
+
         # Record save
         self.config['experiments'][current]['saves'].append({
             'message': message,
@@ -164,87 +164,87 @@ class GitExperiment:
             'commit': self.run_git(['rev-parse', 'HEAD'])
         })
         self.save_config()
-        
+
         print(f"💾 Saved experiment progress: {message}")
-    
+
     def get_current_experiment(self):
         """Get current experiment name"""
         current_branch = self.get_current_branch()
         if current_branch.startswith('experiment/'):
             return current_branch[11:]
         return None
-    
+
     def list_experiments(self):
         """List all experiments"""
         if not self.config['experiments']:
             print("No experiments found")
             return
-        
+
         current = self.get_current_experiment()
         print("📋 Experiments:")
-        
+
         for name, exp in self.config['experiments'].items():
             status = "🧪 ACTIVE" if name == current else "💤 inactive"
             created = datetime.fromisoformat(exp['created']).strftime('%Y-%m-%d %H:%M')
             saves_count = len(exp['saves'])
-            
+
             print(f"   {status} {name}")
             print(f"      Created: {created}")
             print(f"      Original: {exp['original_branch']}")
             print(f"      Saves: {saves_count}")
             print()
-    
+
     def switch_experiment(self, name):
         """Switch to different experiment"""
         if name not in self.config['experiments']:
             raise GitExperimentError(f"Experiment '{name}' not found")
-        
+
         current = self.get_current_experiment()
         if current == name:
             print(f"Already in experiment '{name}'")
             return
-        
+
         # Save current work if in experiment
         if current and not self.is_clean_working_tree():
             self.save_progress("Auto-save before switch")
-        
+
         # Switch to experiment branch
         exp = self.config['experiments'][name]
         self.run_git(['checkout', exp['branch']])
         self.config['current'] = name
         self.save_config()
-        
+
         print(f"🔄 Switched to experiment '{name}'")
-    
+
     def show_diff(self):
         """Show changes in current experiment"""
         current = self.get_current_experiment()
         if not current:
             raise GitExperimentError("Not in an experiment")
-        
+
         exp = self.config['experiments'][current]
         original_branch = exp['original_branch']
-        
+
         print(f"📊 Changes in experiment '{current}' vs {original_branch}:")
         self.run_git(['diff', f'{original_branch}...HEAD'], capture_output=False)
-    
+
     def keep_experiment(self):
         """Keep experiment - merge back to original branch"""
         current = self.get_current_experiment()
         if not current:
             raise GitExperimentError("Not in an experiment")
-        
+
         exp = self.config['experiments'][current]
         original_branch = exp['original_branch']
         experiment_branch = exp['branch']
-        
+
         # Save any uncommitted work
         if not self.is_clean_working_tree():
             self.save_progress("Final save before keeping experiment")
-        
+
         # Switch to original branch
         self.run_git(['checkout', original_branch])
-        
+
         # Restore stashed changes if any
         if exp.get('stash_created'):
             try:
@@ -258,47 +258,47 @@ class GitExperiment:
                             break
             except GitExperimentError:
                 print("⚠️  Could not restore original stash automatically")
-        
+
         # Merge experiment
         print(f"🔀 Merging experiment '{current}' into {original_branch}")
         try:
-            self.run_git(['merge', experiment_branch, '--no-ff', '-m', 
+            self.run_git(['merge', experiment_branch, '--no-ff', '-m',
                          f"Keep experiment: {current}"])
             print(f"✅ Successfully merged experiment '{current}'")
-            
+
             # Clean up
             self.run_git(['branch', '-d', experiment_branch])
             del self.config['experiments'][current]
             self.config['current'] = None
             self.save_config()
-            
+
             print(f"🧹 Cleaned up experiment branch")
-            
+
         except GitExperimentError as e:
             print(f"❌ Merge failed: {e}")
             print(f"   You're on {original_branch}, experiment is in {experiment_branch}")
             print(f"   Resolve conflicts manually and run: git merge {experiment_branch}")
-    
+
     def discard_experiment(self):
         """Discard experiment and return to original state"""
         current = self.get_current_experiment()
         if not current:
             raise GitExperimentError("Not in an experiment")
-        
+
         exp = self.config['experiments'][current]
         original_branch = exp['original_branch']
         experiment_branch = exp['branch']
-        
+
         # Confirm discard
         print(f"⚠️  This will permanently delete experiment '{current}'")
         confirm = input("Are you sure? (yes/no): ").lower().strip()
         if confirm not in ['yes', 'y']:
             print("Cancelled")
             return
-        
+
         # Switch to original branch
         self.run_git(['checkout', original_branch])
-        
+
         # Restore stashed changes if any
         if exp.get('stash_created'):
             try:
@@ -312,53 +312,53 @@ class GitExperiment:
                             break
             except GitExperimentError:
                 print("⚠️  Could not restore original stash automatically")
-        
+
         # Delete experiment branch
         self.run_git(['branch', '-D', experiment_branch])
-        
+
         # Clean up config
         del self.config['experiments'][current]
         self.config['current'] = None
         self.save_config()
-        
+
         print(f"🗑️  Discarded experiment '{current}'")
         print(f"✅ Returned to {original_branch}")
-    
+
     def show_status(self):
         """Show current experiment status"""
         current = self.get_current_experiment()
-        
+
         if not current:
             branch = self.get_current_branch()
             print(f"📍 Not in an experiment (on {branch})")
             return
-        
+
         exp = self.config['experiments'][current]
         created = datetime.fromisoformat(exp['created']).strftime('%Y-%m-%d %H:%M')
         saves_count = len(exp['saves'])
-        
+
         print(f"🧪 Current experiment: {current}")
         print(f"   Created: {created}")
         print(f"   Original branch: {exp['original_branch']}")
         print(f"   Progress saves: {saves_count}")
-        
+
         if exp['saves']:
             latest = exp['saves'][-1]
             latest_time = datetime.fromisoformat(latest['timestamp']).strftime('%Y-%m-%d %H:%M')
             print(f"   Latest save: {latest['message']} ({latest_time})")
-        
+
         # Show working tree status
         if self.is_clean_working_tree():
             print(f"   Working tree: clean")
         else:
             print(f"   Working tree: has changes (use 'git-experiment save' to save)")
-    
+
     def clean_experiments(self):
         """Clean up old/merged experiments"""
         if not self.config['experiments']:
             print("No experiments to clean")
             return
-        
+
         cleaned = []
         for name, exp in list(self.config['experiments'].items()):
             # Check if branch still exists
@@ -368,7 +368,7 @@ class GitExperiment:
                 # Branch doesn't exist, remove from config
                 del self.config['experiments'][name]
                 cleaned.append(name)
-        
+
         if cleaned:
             self.save_config()
             print(f"🧹 Cleaned up {len(cleaned)} old experiments: {', '.join(cleaned)}")
@@ -381,48 +381,48 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Commands')
-    
+
     # Start command
     start_parser = subparsers.add_parser('start', help='Start new experiment')
     start_parser.add_argument('name', help='Experiment name')
-    
+
     # Save command
     save_parser = subparsers.add_parser('save', help='Save progress')
     save_parser.add_argument('message', nargs='?', help='Save message')
-    
+
     # List command
     subparsers.add_parser('list', help='List experiments')
-    
+
     # Switch command
     switch_parser = subparsers.add_parser('switch', help='Switch experiment')
     switch_parser.add_argument('name', help='Experiment name')
-    
+
     # Diff command
     subparsers.add_parser('diff', help='Show experiment changes')
-    
+
     # Keep command
     subparsers.add_parser('keep', help='Keep experiment (merge back)')
-    
+
     # Discard command
     subparsers.add_parser('discard', help='Discard experiment')
-    
+
     # Status command
     subparsers.add_parser('status', help='Show experiment status')
-    
+
     # Clean command
     subparsers.add_parser('clean', help='Clean up old experiments')
-    
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return
-    
+
     try:
         experiment = GitExperiment()
-        
+
         if args.command == 'start':
             experiment.start_experiment(args.name)
         elif args.command == 'save':
@@ -441,7 +441,7 @@ def main():
             experiment.show_status()
         elif args.command == 'clean':
             experiment.clean_experiments()
-        
+
     except GitExperimentError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

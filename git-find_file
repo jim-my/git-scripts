@@ -64,10 +64,10 @@ parse_arguments() {
     if [[ $# -eq 0 ]]; then
         usage
     fi
-    
+
     PATTERN=""
     SEARCH_LOCAL=false
-    
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --local)
@@ -89,7 +89,7 @@ parse_arguments() {
         esac
         shift
     done
-    
+
     if [[ -z "$PATTERN" ]]; then
         error_exit "Pattern is required. Use --help for usage information."
     fi
@@ -99,7 +99,7 @@ parse_arguments() {
 search_files() {
     local pattern="$1"
     local search_local="$2"
-    
+
     # Set location based on search type
     local loc
     if [[ "$search_local" == true ]]; then
@@ -109,22 +109,22 @@ search_files() {
         loc="refs/remotes/origin"
         echo "Searching remote branches for pattern: $pattern"
     fi
-    
+
     local found_any=false
-    
+
     # Use process substitution to avoid issues with pipes and subshells
     while IFS= read -r branch; do
         if [[ -z "$branch" ]]; then
             continue
         fi
-        
+
         # Search for files in this branch
         local found_files
         if found_files=$(git ls-tree -r --name-only "$branch" 2>/dev/null | grep "$pattern" 2>/dev/null); then
             found_any=true
             local branch_name
             branch_name="${branch#$loc/}"
-            
+
             # Print each found file with branch name
             while IFS= read -r file; do
                 if [[ -n "$file" ]]; then
@@ -133,7 +133,7 @@ search_files() {
             done <<< "$found_files"
         fi
     done < <(git for-each-ref --format="%(refname)" "$loc" 2>/dev/null)
-    
+
     if [[ "$found_any" == false ]]; then
         echo "No files found matching pattern: $pattern"
         exit 1

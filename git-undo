@@ -23,7 +23,7 @@ USAGE:
 DESCRIPTION:
     Undoes your last commit using 'git reset --soft HEAD^', which removes
     the commit from history but keeps all the changes staged for commit.
-    
+
     This is useful when you want to:
     - Modify your last commit message
     - Split your last commit into multiple commits

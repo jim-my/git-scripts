@@ -103,14 +103,14 @@ find_install_directories() {
         "$HOME/bin"
         "/usr/local/bin"
     )
-    
+
     local found_dirs=()
     for dir in "${candidates[@]}"; do
         if [[ -d "$dir" ]]; then
             found_dirs+=("$dir")
         fi
     done
-    
+
     printf '%s\n' "${found_dirs[@]}"
 }
 
@@ -128,24 +128,24 @@ remove_scripts_from_dir() {
     while IFS= read -r name; do
         script_names+=("$name")
     done < <(get_script_names)
-    
+
     log_info "ALWAYS" "Removing scripts from $install_dir"
-    
+
     local found=0
     local removed=0
     local failed=0
-    
+
     for script_name in "${script_names[@]}"; do
         local script_path="$install_dir/$script_name"
-        
+
         if [[ -f "$script_path" ]]; then
             ((found++))
-            
+
             if [[ "$DRY_RUN" == true ]]; then
                 echo "  Would remove: $script_path"
                 continue
             fi
-            
+
             if rm -f "$script_path" 2>/dev/null; then
                 log_info "Removed: $script_name"
                 ((removed++))
@@ -155,28 +155,28 @@ remove_scripts_from_dir() {
             fi
         fi
     done
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         log_info "ALWAYS" "DRY RUN: Would remove $found scripts from $install_dir"
     else
         log_success "Removed $removed scripts, failed $failed"
     fi
-    
+
     return $found
 }
 
 # Auto uninstall - search common directories
 auto_uninstall() {
     log_info "ALWAYS" "Searching for installed scripts..."
-    
+
     local total_found=0
-    
+
     while IFS= read -r dir; do
         if remove_scripts_from_dir "$dir"; then
             ((total_found += $?))
         fi
     done < <(find_install_directories)
-    
+
     if [[ "$total_found" -eq 0 ]]; then
         log_warning "No installed scripts found in common directories"
         log_info "ALWAYS" "Try: ./uninstall.sh --method search --verbose"
@@ -186,14 +186,14 @@ auto_uninstall() {
 # Search method - look more thoroughly
 search_uninstall() {
     log_info "ALWAYS" "Searching PATH for installed scripts..."
-    
+
     local script_names=()
     while IFS= read -r name; do
         script_names+=("$name")
     done < <(get_script_names)
-    
+
     local found_scripts=()
-    
+
     for script_name in "${script_names[@]}"; do
         local script_path
         if script_path=$(command -v "$script_name" 2>/dev/null); then
@@ -201,18 +201,18 @@ search_uninstall() {
             log_info "Found: $script_path"
         fi
     done
-    
+
     if [[ "${#found_scripts[@]}" -eq 0 ]]; then
         log_warning "No scripts found in PATH"
         return 0
     fi
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         log_info "ALWAYS" "DRY RUN: Would remove ${#found_scripts[@]} scripts:"
         printf '  %s\n' "${found_scripts[@]}"
         return 0
     fi
-    
+
     # Confirm removal
     if [[ "$FORCE" == false ]]; then
         echo
@@ -225,10 +225,10 @@ search_uninstall() {
             return 0
         fi
     fi
-    
+
     local removed=0
     local failed=0
-    
+
     for script_path in "${found_scripts[@]}"; do
         if rm -f "$script_path" 2>/dev/null; then
             log_info "Removed: $script_path"
@@ -238,19 +238,19 @@ search_uninstall() {
             ((failed++))
         fi
     done
-    
+
     log_success "Removed $removed scripts, failed $failed"
 }
 
 # Manual uninstall from specific directory
 manual_uninstall() {
     local install_dir="$1"
-    
+
     if [[ ! -d "$install_dir" ]]; then
         log_error "Directory does not exist: $install_dir"
         return 1
     fi
-    
+
     remove_scripts_from_dir "$install_dir"
 }
 
@@ -260,22 +260,22 @@ remove_path_entries() {
         log_info "Skipping PATH cleanup (use --remove-configs to clean)"
         return 0
     fi
-    
+
     log_info "ALWAYS" "Cleaning PATH entries from shell config files..."
-    
+
     local shell_configs=(
         "$HOME/.bashrc"
         "$HOME/.zshrc"
         "$HOME/.profile"
     )
-    
+
     local cleaned=0
-    
+
     for config in "${shell_configs[@]}"; do
         if [[ ! -f "$config" ]]; then
             continue
         fi
-        
+
         # Look for lines containing our script directory
         if grep -q "$SCRIPT_DIR" "$config" 2>/dev/null; then
             if [[ "$DRY_RUN" == true ]]; then
@@ -283,10 +283,10 @@ remove_path_entries() {
                 grep "$SCRIPT_DIR" "$config" | sed 's/^/  /'
                 continue
             fi
-            
+
             # Create backup
             cp "$config" "$config.backup.$(date +%Y%m%d_%H%M%S)"
-            
+
             # Remove lines containing our script directory
             if grep -v "$SCRIPT_DIR" "$config" > "$config.tmp" && mv "$config.tmp" "$config"; then
                 log_info "Cleaned PATH entries from: $config"
@@ -298,7 +298,7 @@ remove_path_entries() {
             fi
         fi
     done
-    
+
     if [[ "$DRY_RUN" == false ]] && [[ "$cleaned" -gt 0 ]]; then
         log_success "Cleaned $cleaned config files"
         log_info "ALWAYS" "Restart your shell to apply changes"
@@ -308,10 +308,10 @@ remove_path_entries() {
 # Verify uninstallation
 verify_uninstall() {
     log_info "ALWAYS" "Verifying uninstallation..."
-    
+
     local test_scripts=("git-check-dup" "git-experiment" "git-wtf")
     local still_found=0
-    
+
     for script in "${test_scripts[@]}"; do
         if command -v "$script" >/dev/null 2>&1; then
             log_warning "✗ $script still found in PATH"
@@ -320,7 +320,7 @@ verify_uninstall() {
             log_info "✓ $script not found"
         fi
     done
-    
+
     if [[ "$still_found" -eq 0 ]]; then
         log_success "Uninstallation verified - no scripts found in PATH"
         return 0
@@ -366,7 +366,7 @@ parse_arguments() {
         esac
         shift
     done
-    
+
     # Validate uninstall method
     case "$UNINSTALL_METHOD" in
         auto|search|manual)
@@ -376,7 +376,7 @@ parse_arguments() {
             usage
             ;;
     esac
-    
+
     # Manual method requires directory
     if [[ "$UNINSTALL_METHOD" == "manual" ]] && [[ -z "$INSTALL_DIR" ]]; then
         log_error "Manual method requires --dir option"
@@ -388,15 +388,15 @@ parse_arguments() {
 main() {
     echo -e "${BOLD}Git Scripts Collection Uninstaller${NC}"
     echo
-    
+
     parse_arguments "$@"
-    
+
     # Check if script directory exists
     if [[ ! -d "$SCRIPT_DIR" ]]; then
         log_error "Scripts directory not found: $SCRIPT_DIR"
         exit 1
     fi
-    
+
     # Perform uninstallation
     case "$UNINSTALL_METHOD" in
         auto)
@@ -409,17 +409,17 @@ main() {
             manual_uninstall "$INSTALL_DIR"
             ;;
     esac
-    
+
     # Clean PATH entries if requested
     remove_path_entries
-    
+
     echo
-    
+
     # Verify uninstallation (skip for dry-run)
     if [[ "$DRY_RUN" == false ]]; then
         verify_uninstall
     fi
-    
+
     # Show completion message
     echo
     if [[ "$DRY_RUN" == true ]]; then
@@ -427,7 +427,7 @@ main() {
     else
         log_success "Uninstallation complete!"
     fi
-    
+
     echo
     echo -e "${CYAN}If scripts are still accessible:${NC}"
     echo "1. Check for additional installation directories"

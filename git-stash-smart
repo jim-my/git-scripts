@@ -50,7 +50,7 @@ class StashInfo:
         self.timestamp = timestamp
         self.files_count = files_count
         self.datetime = self._parse_timestamp(timestamp)
-    
+
     def _parse_timestamp(self, timestamp: str) -> datetime:
         """Parse Git timestamp to datetime"""
         try:
@@ -60,12 +60,12 @@ class StashInfo:
             return datetime.strptime(timestamp_clean, "%a %b %d %H:%M:%S %Y")
         except ValueError:
             return datetime.now()
-    
+
     def age_str(self) -> str:
         """Get human-readable age of stash"""
         now = datetime.now()
         diff = now - self.datetime
-        
+
         if diff.days > 30:
             return f"{diff.days // 30} months ago"
         elif diff.days > 0:
@@ -74,7 +74,7 @@ class StashInfo:
             return f"{diff.seconds // 3600} hours ago"
         else:
             return f"{diff.seconds // 60} minutes ago"
-    
+
     def summary(self) -> str:
         """Get summary line for stash"""
         files_info = f" ({self.files_count} files)" if self.files_count > 0 else ""
@@ -87,7 +87,7 @@ class GitStashSmart:
         self.config_dir.mkdir(exist_ok=True)
         self.aliases_file = self.config_dir / 'aliases.json'
         self.load_aliases()
-    
+
     def load_aliases(self):
         """Load stash aliases/descriptions"""
         if self.aliases_file.exists():
@@ -95,12 +95,12 @@ class GitStashSmart:
                 self.aliases = json.load(f)
         else:
             self.aliases = {}
-    
+
     def save_aliases(self):
         """Save stash aliases/descriptions"""
         with open(self.aliases_file, 'w') as f:
             json.dump(self.aliases, f, indent=2)
-    
+
     def run_git(self, cmd: List[str], check: bool = True, capture_output: bool = True) -> str:
         """Run git command safely"""
         try:
@@ -116,7 +116,7 @@ class GitStashSmart:
                 raise GitStashSmartError(f"Git command failed: {' '.join(cmd)}\n{e.stderr}")
             else:
                 raise GitStashSmartError(f"Git command failed: {' '.join(cmd)}")
-    
+
     def get_stashes(self) -> List[StashInfo]:
         """Get all stashes with enhanced information"""
         try:
@@ -124,55 +124,55 @@ class GitStashSmart:
             stash_output = self.run_git(['stash', 'list', '--pretty=format:%gd:%s:%cd'])
             if not stash_output:
                 return []
-            
+
             stashes = []
             for line in stash_output.split('\n'):
                 if not line.strip():
                     continue
-                
+
                 parts = line.split(':', 2)
                 if len(parts) != 3:
                     continue
-                
+
                 stash_ref, subject, timestamp = parts
-                
+
                 # Extract branch from subject (format: "WIP on branch: description")
                 branch_match = re.match(r'WIP on ([^:]+):', subject)
                 branch = branch_match.group(1) if branch_match else "unknown"
-                
+
                 # Clean description
                 description = re.sub(r'^WIP on [^:]+:\s*', '', subject)
                 if not description:
                     description = "No description"
-                
+
                 # Get file count for this stash
                 try:
                     stat_output = self.run_git(['stash', 'show', '--stat', stash_ref])
                     files_count = len([l for l in stat_output.split('\n') if '|' in l])
                 except GitStashSmartError:
                     files_count = 0
-                
+
                 # Check for custom alias
                 if stash_ref in self.aliases:
                     description = self.aliases[stash_ref]
-                
+
                 stashes.append(StashInfo(stash_ref, description, branch, timestamp, files_count))
-            
+
             return stashes
-        
+
         except GitStashSmartError:
             return []
-    
+
     def find_stash(self, identifier: str) -> Optional[StashInfo]:
         """Find stash by ID, keyword, or description"""
         stashes = self.get_stashes()
-        
+
         # Try exact stash reference first
         if identifier.startswith('stash@{') and identifier.endswith('}'):
             for stash in stashes:
                 if stash.stash_ref == identifier:
                     return stash
-        
+
         # Try numeric index
         try:
             index = int(identifier)
@@ -180,13 +180,13 @@ class GitStashSmart:
                 return stashes[index]
         except ValueError:
             pass
-        
+
         # Search by keyword in description
         keyword_matches = []
         for stash in stashes:
             if identifier.lower() in stash.description.lower():
                 keyword_matches.append(stash)
-        
+
         if len(keyword_matches) == 1:
             return keyword_matches[0]
         elif len(keyword_matches) > 1:
@@ -200,14 +200,14 @@ class GitStashSmart:
                     return keyword_matches[idx]
             except ValueError:
                 pass
-        
+
         return None
-    
+
     def save_stash(self, description: str, include_untracked: bool = False):
         """Save stash with descriptive name"""
         if not description.strip():
             raise GitStashSmartError("Description is required")
-        
+
         # Check if there are changes to stash
         try:
             self.run_git(['diff-index', '--quiet', 'HEAD'])
@@ -222,39 +222,39 @@ class GitStashSmart:
                 return
         except GitStashSmartError:
             pass  # Good, there are changes
-        
+
         # Create stash with custom message
         branch = self.run_git(['branch', '--show-current'])
         stash_message = f"WIP on {branch}: {description.strip()}"
-        
+
         cmd = ['stash', 'push', '-m', stash_message]
         if include_untracked:
             cmd.append('--include-untracked')
-        
+
         self.run_git(cmd)
-        
+
         # Get the new stash reference and save alias
         stashes = self.get_stashes()
         if stashes:
             new_stash = stashes[0]  # Most recent stash
             self.aliases[new_stash.stash_ref] = description.strip()
             self.save_aliases()
-        
+
         print(f"💾 Saved stash: {description}")
-    
+
     def list_stashes(self, verbose: bool = False):
         """List all stashes with enhanced formatting"""
         stashes = self.get_stashes()
-        
+
         if not stashes:
             print("No stashes found")
             return
-        
+
         print(f"📚 Found {len(stashes)} stashes:\n")
-        
+
         for i, stash in enumerate(stashes):
             print(f"  {i}: {stash.summary()}")
-            
+
             if verbose:
                 try:
                     # Show file summary
@@ -269,158 +269,158 @@ class GitStashSmart:
                 except GitStashSmartError:
                     pass
                 print()
-    
+
     def show_stash(self, identifier: str):
         """Show contents of a stash"""
         stash = self.find_stash(identifier)
         if not stash:
             raise GitStashSmartError(f"Stash not found: {identifier}")
-        
+
         print(f"📄 Stash: {stash.summary()}\n")
-        
+
         # Show stash contents
         try:
             self.run_git(['stash', 'show', '-p', stash.stash_ref], capture_output=False)
         except GitStashSmartError:
             print("Could not show stash contents")
-    
+
     def apply_stash(self, identifier: str):
         """Apply stash (keep in stash list)"""
         stash = self.find_stash(identifier)
         if not stash:
             raise GitStashSmartError(f"Stash not found: {identifier}")
-        
+
         print(f"🔄 Applying stash: {stash.description}")
-        
+
         try:
             self.run_git(['stash', 'apply', stash.stash_ref])
             print(f"✅ Applied stash successfully")
         except GitStashSmartError as e:
             print(f"❌ Failed to apply stash: {e}")
-    
+
     def pop_stash(self, identifier: str):
         """Pop stash (remove from stash list)"""
         stash = self.find_stash(identifier)
         if not stash:
             raise GitStashSmartError(f"Stash not found: {identifier}")
-        
+
         print(f"🔄 Popping stash: {stash.description}")
-        
+
         try:
             self.run_git(['stash', 'pop', stash.stash_ref])
-            
+
             # Remove alias
             if stash.stash_ref in self.aliases:
                 del self.aliases[stash.stash_ref]
                 self.save_aliases()
-            
+
             print(f"✅ Popped stash successfully")
         except GitStashSmartError as e:
             print(f"❌ Failed to pop stash: {e}")
-    
+
     def drop_stash(self, identifier: str):
         """Delete a stash"""
         stash = self.find_stash(identifier)
         if not stash:
             raise GitStashSmartError(f"Stash not found: {identifier}")
-        
+
         print(f"⚠️  Delete stash: {stash.description}")
         confirm = input("Are you sure? (yes/no): ").lower().strip()
-        
+
         if confirm not in ['yes', 'y']:
             print("Cancelled")
             return
-        
+
         try:
             self.run_git(['stash', 'drop', stash.stash_ref])
-            
+
             # Remove alias
             if stash.stash_ref in self.aliases:
                 del self.aliases[stash.stash_ref]
                 self.save_aliases()
-            
+
             print(f"🗑️  Dropped stash successfully")
         except GitStashSmartError as e:
             print(f"❌ Failed to drop stash: {e}")
-    
+
     def search_stashes(self, keyword: str):
         """Search stashes by keyword"""
         stashes = self.get_stashes()
         matches = []
-        
+
         for stash in stashes:
             if keyword.lower() in stash.description.lower():
                 matches.append(stash)
-        
+
         if not matches:
             print(f"No stashes found matching '{keyword}'")
             return
-        
+
         print(f"🔍 Found {len(matches)} stashes matching '{keyword}':\n")
         for i, stash in enumerate(matches):
             print(f"  {i}: {stash.summary()}")
-    
+
     def diff_stash(self, identifier: str):
         """Show diff for stash"""
         stash = self.find_stash(identifier)
         if not stash:
             raise GitStashSmartError(f"Stash not found: {identifier}")
-        
+
         print(f"📊 Diff for stash: {stash.description}\n")
-        
+
         try:
             self.run_git(['stash', 'show', '-p', stash.stash_ref], capture_output=False)
         except GitStashSmartError:
             print("Could not show stash diff")
-    
+
     def create_branch_from_stash(self, branch_name: str, identifier: str):
         """Create branch from stash"""
         stash = self.find_stash(identifier)
         if not stash:
             raise GitStashSmartError(f"Stash not found: {identifier}")
-        
+
         print(f"🌿 Creating branch '{branch_name}' from stash: {stash.description}")
-        
+
         try:
             # Create and checkout new branch from stash
             self.run_git(['stash', 'branch', branch_name, stash.stash_ref])
-            
+
             # Remove alias since stash is consumed
             if stash.stash_ref in self.aliases:
                 del self.aliases[stash.stash_ref]
                 self.save_aliases()
-            
+
             print(f"✅ Created branch '{branch_name}' successfully")
         except GitStashSmartError as e:
             print(f"❌ Failed to create branch: {e}")
-    
+
     def clean_stashes(self):
         """Interactive cleanup of old stashes"""
         stashes = self.get_stashes()
-        
+
         if not stashes:
             print("No stashes to clean")
             return
-        
+
         print("🧹 Stash cleanup - select stashes to delete:\n")
-        
+
         old_stashes = []
         for stash in stashes:
             age_days = (datetime.now() - stash.datetime).days
             if age_days > 30:  # Older than 30 days
                 old_stashes.append(stash)
-        
+
         if not old_stashes:
             print("No old stashes found (older than 30 days)")
             return
-        
+
         print(f"Found {len(old_stashes)} stashes older than 30 days:")
         for i, stash in enumerate(old_stashes):
             print(f"  {i}: {stash.summary()}")
-        
+
         print("\nSelect stashes to delete (comma-separated numbers, or 'all'):")
         selection = input("> ").strip().lower()
-        
+
         if selection == 'all':
             to_delete = old_stashes
         else:
@@ -430,20 +430,20 @@ class GitStashSmart:
             except (ValueError, IndexError):
                 print("Invalid selection")
                 return
-        
+
         if not to_delete:
             print("No stashes selected")
             return
-        
+
         print(f"\nWill delete {len(to_delete)} stashes:")
         for stash in to_delete:
             print(f"  - {stash.description}")
-        
+
         confirm = input("\nProceed? (yes/no): ").lower().strip()
         if confirm not in ['yes', 'y']:
             print("Cancelled")
             return
-        
+
         # Delete selected stashes
         deleted_count = 0
         for stash in to_delete:
@@ -454,7 +454,7 @@ class GitStashSmart:
                 deleted_count += 1
             except GitStashSmartError:
                 print(f"Failed to delete: {stash.description}")
-        
+
         if deleted_count > 0:
             self.save_aliases()
             print(f"🗑️  Deleted {deleted_count} stashes")
@@ -465,61 +465,61 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Commands')
-    
+
     # Save command
     save_parser = subparsers.add_parser('save', help='Save stash with description')
     save_parser.add_argument('description', help='Stash description')
     save_parser.add_argument('-u', '--include-untracked', action='store_true',
                            help='Include untracked files')
-    
+
     # List command
     list_parser = subparsers.add_parser('list', help='List all stashes')
     list_parser.add_argument('-v', '--verbose', action='store_true',
                            help='Show detailed information')
-    
+
     # Show command
     show_parser = subparsers.add_parser('show', help='Show stash contents')
     show_parser.add_argument('identifier', help='Stash ID, number, or keyword')
-    
+
     # Apply command
     apply_parser = subparsers.add_parser('apply', help='Apply stash (keep in list)')
     apply_parser.add_argument('identifier', help='Stash ID, number, or keyword')
-    
+
     # Pop command
     pop_parser = subparsers.add_parser('pop', help='Pop stash (remove from list)')
     pop_parser.add_argument('identifier', help='Stash ID, number, or keyword')
-    
+
     # Drop command
     drop_parser = subparsers.add_parser('drop', help='Delete stash')
     drop_parser.add_argument('identifier', help='Stash ID, number, or keyword')
-    
+
     # Search command
     search_parser = subparsers.add_parser('search', help='Search stashes by keyword')
     search_parser.add_argument('keyword', help='Search keyword')
-    
+
     # Diff command
     diff_parser = subparsers.add_parser('diff', help='Show stash diff')
     diff_parser.add_argument('identifier', help='Stash ID, number, or keyword')
-    
+
     # Branch command
     branch_parser = subparsers.add_parser('branch', help='Create branch from stash')
     branch_parser.add_argument('name', help='Branch name')
     branch_parser.add_argument('identifier', help='Stash ID, number, or keyword')
-    
+
     # Clean command
     subparsers.add_parser('clean', help='Interactive cleanup of old stashes')
-    
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return
-    
+
     try:
         stash_manager = GitStashSmart()
-        
+
         if args.command == 'save':
             stash_manager.save_stash(args.description, args.include_untracked)
         elif args.command == 'list':
@@ -540,7 +540,7 @@ def main():
             stash_manager.create_branch_from_stash(args.name, args.identifier)
         elif args.command == 'clean':
             stash_manager.clean_stashes()
-        
+
     except GitStashSmartError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

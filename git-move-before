@@ -3,7 +3,7 @@
 # git-move-before: Move a commit to be positioned before another commit
 #
 # This script provides an intuitive way to reorder commits without using
-# interactive rebase. It moves a given commit to be positioned before 
+# interactive rebase. It moves a given commit to be positioned before
 # another specified commit, handling the rebase operations automatically.
 #
 # Key features:
@@ -27,7 +27,7 @@ USAGE:
 DESCRIPTION:
     Moves the specified commit to be positioned immediately before the target commit.
     This is more intuitive than using git rebase -i for simple commit reordering.
-    
+
     The script handles the rebase operations automatically and preserves any
     commits that come after the moved commit.
 
@@ -41,10 +41,10 @@ OPTIONS:
 EXAMPLES:
     # Move commit abc123 to be before commit def456
     git move-before abc123 def456
-    
+
     # Move HEAD to be before a specific commit
     git move-before HEAD def456
-    
+
     # Interactive mode - script will help you identify commits
     git move-before
 
@@ -243,7 +243,7 @@ MOVED_COMMIT_NEW_HASH=$(git rev-parse HEAD)
 # Rebase the target commit and everything after it onto the moved commit
 if ! git rebase --onto "$MOVED_COMMIT_NEW_HASH" "$TARGET_COMMIT_HASH~1" "$BACKUP_BRANCH"; then
     echo "Error: Failed to rebase target and later commits. You may need to resolve conflicts manually."
-    echo "To continue: git rebase --continue (after resolving conflicts)"  
+    echo "To continue: git rebase --continue (after resolving conflicts)"
     echo "To abort: git rebase --abort && git reset --hard $BACKUP_BRANCH"
     exit 1
 fi

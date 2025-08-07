@@ -18,7 +18,7 @@ set -euo pipefail
 #
 # HOW IT WORKS:
 #   1. Finds common ancestor between branches
-#   2. Collects all commits since that point from both branches  
+#   2. Collects all commits since that point from both branches
 #   3. Computes patch-id for each commit (content fingerprint)
 #   4. Reports commits with matching patch-ids as duplicates
 #
@@ -96,17 +96,17 @@ join -j 1 <(sort "$local_patches") <(sort "$remote_patches") | while read -r pat
     else
         # Default mode: header + detailed info
         current_branch=$(git rev-parse --abbrev-ref HEAD)
-        
+
         # Header line aligned with data
         printf "%-40s %-40s %s\n" "Local" "Remote($remote_branch)" "Patch_id"
         printf "%-40s %-40s %s\n" "$local_hash" "$remote_hash" "$patch_id"
-        
+
         # Get commit details
         local_date=$(git log -1 --pretty=format:'%ad' --date=short "$local_hash")
         local_msg=$(git log -1 --pretty=format:'%s' "$local_hash")
         remote_date=$(git log -1 --pretty=format:'%ad' --date=short "$remote_hash")
         remote_msg=$(git log -1 --pretty=format:'%s' "$remote_hash")
-        
+
         echo "    ${local_hash:0:8}: $local_date $local_msg"
         echo "    ${remote_hash:0:8}: $remote_date $remote_msg"
     fi

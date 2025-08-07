@@ -37,7 +37,7 @@ OPTIONS:
 EXAMPLES:
     # Credit someone for the last commit
     git credit "Jane Doe" jane.doe@example.com
-    
+
     # Credit with a simple name
     git credit johnsmith john@example.com
 

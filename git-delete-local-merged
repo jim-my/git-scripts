@@ -26,7 +26,7 @@ DESCRIPTION:
     Deletes all local branches that have been completely merged into the
     current branch. This helps clean up feature branches after they've
     been merged.
-    
+
     Protected branches that will never be deleted:
     - master, main, develop, development
     - The currently checked out branch
@@ -38,7 +38,7 @@ OPTIONS:
 EXAMPLES:
     # Delete merged branches (with confirmation)
     git delete-local-merged
-    
+
     # See which branches would be deleted
     git delete-local-merged --dry-run
 
@@ -100,10 +100,10 @@ MERGED_BRANCHES=()
 while IFS= read -r branch; do
     # Remove leading/trailing whitespace and asterisk
     branch=$(echo "$branch" | sed 's/^[[:space:]]*\*[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-    
+
     # Skip empty lines
     [[ -z "$branch" ]] && continue
-    
+
     # Check if branch is protected
     is_protected=false
     for protected in "${PROTECTED_BRANCHES[@]}"; do
@@ -112,7 +112,7 @@ while IFS= read -r branch; do
             break
         fi
     done
-    
+
     # Add to deletion list if not protected
     if [[ "$is_protected" == false ]]; then
         MERGED_BRANCHES+=("$branch")
