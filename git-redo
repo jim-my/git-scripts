@@ -1,0 +1,203 @@
+#!/bin/bash
+
+# git-redo: Redo the most recently undone commit
+#
+# This script can either:
+# 1. Fully restore an undone commit with original content and message
+# 2. Commit current staged changes using the original commit message
+#
+# Safety features:
+# - Validates you're in a git repository
+# - Checks for undone commits in reflog
+# - Shows confirmation before proceeding
+
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+git-redo - Redo the most recently undone commit
+
+USAGE:
+    git redo [--message-only] [--help]
+
+DESCRIPTION:
+    Finds the most recently undone commit from the reflog and either:
+
+    Default mode: Fully restores the undone commit (content + message)
+    --message-only: Commits current staged changes with the original message
+
+    This works by searching the reflog for recent reset operations and
+    finding the commit that was reset away by git-undo.
+
+OPTIONS:
+    --message-only    Commit staged changes with original commit message
+    --help           Show this help message
+
+EXAMPLES:
+    # Fully restore the most recently undone commit
+    git redo
+
+    # Commit staged changes with the original commit message
+    git redo --message-only
+
+    # Same as above (if using git-recommit alias)
+    git recommit
+
+WORKFLOW EXAMPLES:
+    # Full restore workflow
+    git undo              # Undo last commit, keep changes staged
+    git redo              # Restore exact same commit
+
+    # Message-only workflow
+    git undo              # Undo last commit, keep changes staged
+    # ... make additional changes ...
+    git add .             # Stage new changes
+    git redo --message-only   # Commit with original message
+
+SAFETY:
+    - Requires you to be in a git repository
+    - Confirms the operation before proceeding
+    - Handles conflicts gracefully in full restore mode
+
+SEE ALSO:
+    git-undo, git-recommit, git cherry-pick, git reflog
+
+EOF
+}
+
+message_only=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --message-only)
+            message_only=true
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown argument '$1'"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Safety checks
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Find the most recent reset operation in reflog that looks like git-undo
+# Look for "reset: moving to HEAD^" or similar reset operations
+reset_entry=$(git reflog --format="%H %gd %gs" | grep -E "reset.*moving to HEAD" | head -1 || true)
+
+if [[ -z "$reset_entry" ]]; then
+    echo "Error: No recent undo operation found in reflog."
+    echo "Cannot find a commit to redo."
+    echo
+    echo "Hint: git-redo works with commits that were undone using 'git undo'"
+    exit 1
+fi
+
+# Parse the reflog entry
+read -r _ reflog_ref _ <<< "$reset_entry"
+
+# Get the commit that was reset away
+# We need to look at what HEAD was before the reset operation
+undone_commit=""
+
+# Try to get the commit from the reflog entry before the reset
+if [[ "$reflog_ref" =~ HEAD@\{([0-9]+)\} ]]; then
+    ref_index=${BASH_REMATCH[1]}
+    prev_index=$((ref_index + 1))
+    undone_commit=$(git reflog show --format="%H" "HEAD@{$prev_index}" -1 2>/dev/null || true)
+fi
+
+if [[ -z "$undone_commit" ]]; then
+    echo "Error: Cannot determine the undone commit from reflog."
+    exit 1
+fi
+
+# Verify the undone commit exists
+if ! git rev-parse --verify "$undone_commit" >/dev/null 2>&1; then
+    echo "Error: Undone commit $undone_commit not found."
+    exit 1
+fi
+
+# Get the original commit message
+original_message=$(git log --format="%B" -1 "$undone_commit")
+
+if [[ "$message_only" == true ]]; then
+    # Message-only mode: commit staged changes with original message
+    echo "Mode: Commit staged changes with original message"
+    echo
+    echo "Original commit message:"
+    echo "────────────────────────"
+    echo "$original_message"
+    echo "────────────────────────"
+    echo
+
+    # Check if there are staged changes
+    if ! git diff --cached --quiet; then
+        echo "Staged changes to be committed:"
+        git diff --cached --stat
+        echo
+
+        read -p "Commit staged changes with the original message? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+
+        echo "Creating commit with original message..."
+        git commit -m "$original_message"
+        echo "✓ Changes committed with original message!"
+
+    else
+        echo "Error: No staged changes found."
+        echo "Stage some changes first with 'git add' before running git redo --message-only"
+        exit 1
+    fi
+
+else
+    # Full restore mode: cherry-pick the undone commit
+    echo "Mode: Full restore of undone commit"
+    echo
+    echo "Commit to be restored:"
+    git log --oneline -1 "$undone_commit"
+    echo
+    echo "This will cherry-pick the commit to restore it completely."
+    echo
+
+    read -p "Proceed with full restore? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+
+    echo "Executing: git cherry-pick $undone_commit"
+
+    if git cherry-pick "$undone_commit"; then
+        echo "✓ Commit fully restored!"
+        echo "Original commit message and changes have been restored."
+
+    else
+        echo
+        echo "✗ Cherry-pick failed due to conflicts."
+        echo "Please resolve the conflicts and run:"
+        echo "  git cherry-pick --continue"
+        echo "Or abort with:"
+        echo "  git cherry-pick --abort"
+        exit 1
+    fi
+fi
+
+# Show current status
+echo
+echo "Current HEAD:"
+git log --oneline -1 HEAD

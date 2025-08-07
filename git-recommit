@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# git-recommit: Alias for git-redo --message-only
+#
+# This is a convenience script that calls git-redo with the --message-only flag.
+# It commits staged changes using the original commit message from the most
+# recently undone commit.
+#
+# Note: You can also set this up as a git alias instead:
+#   git config --global alias.recommit 'redo --message-only'
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Call git-redo with --message-only flag, passing through any additional arguments
+exec "$SCRIPT_DIR/git-redo" --message-only "$@"
