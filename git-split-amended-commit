@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # git-split-amended-commit: Split accidentally amended commits back into separate commits
-# 
-# This script handles the case where you accidentally used 'git commit --amend' 
+#
+# This script handles the case where you accidentally used 'git commit --amend'
 # and combined two commits into one. It can work with commits anywhere in history,
 # not just HEAD, and will preserve any commits that come after the merged commit
 # by rebasing them on top of the split commits.
@@ -27,7 +27,7 @@ USAGE:
 DESCRIPTION:
     When you accidentally use 'git commit --amend' and combine two commits into one,
     this script helps split them back apart by:
-    
+
     1. Creating the original commit and remaining changes as separate commits
     2. If there are commits after the merged commit, rebases them on top
     3. Preserves all later commits in the history
@@ -42,10 +42,10 @@ OPTIONS:
 EXAMPLES:
     # Split HEAD commit, using a specific original commit
     git split-amended-commit HEAD abc123f
-    
-    # Split a specific merged commit  
+
+    # Split a specific merged commit
     git split-amended-commit def456a abc123f
-    
+
     # Interactive mode - script will help you identify commits
     git split-amended-commit
 
@@ -53,9 +53,9 @@ SCENARIOS:
     # Simple case (merged commit is HEAD):
     # Before: A -> B -> [merged:C+D] -> HEAD
     # After:  A -> B -> C -> D -> HEAD
-    
+
     # Complex case (commits after merged commit):
-    # Before: A -> B -> [merged:C+D] -> E -> F -> HEAD  
+    # Before: A -> B -> [merged:C+D] -> E -> F -> HEAD
     # After:  A -> B -> C -> D -> E' -> F' -> HEAD
     # (E and F are rebased on top of the split commits)
 
@@ -115,10 +115,10 @@ if [[ -z "$ORIGINAL_COMMIT" ]]; then
     if [[ -n "$MERGED_COMMIT" ]]; then
         echo
         echo "Finding potential original commits using branch differences..."
-        
+
         # Show commits from branch differences that might be the original
         POTENTIAL_COMMITS=()
-        
+
         # Strategy 1: Check commits that differ from main/master branches
         for main_branch in "main" "master" "origin/main" "origin/master"; do
             if git rev-parse --verify "$main_branch" >/dev/null 2>&1; then
@@ -131,7 +131,7 @@ if [[ -z "$ORIGINAL_COMMIT" ]]; then
                 break  # Use first available main branch
             fi
         done
-        
+
         # Strategy 2: If no main branch found, check recent commits on current branch
         if [[ ${#POTENTIAL_COMMITS[@]} -eq 0 ]]; then
             echo "No main branch found, checking recent commits on current branch..."
@@ -141,7 +141,7 @@ if [[ -z "$ORIGINAL_COMMIT" ]]; then
                 fi
             done < <(git log --format="%H" -10)
         fi
-        
+
         # Strategy 3: Check commits from remote tracking branch differences
         if git remote >/dev/null 2>&1; then
             TRACKING_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "")
@@ -154,10 +154,10 @@ if [[ -z "$ORIGINAL_COMMIT" ]]; then
                 done < <(git log --format="%H" "$TRACKING_BRANCH..HEAD" 2>/dev/null | head -5)
             fi
         fi
-        
+
         # Remove duplicates and show options
         UNIQUE_COMMITS=($(printf "%s\n" "${POTENTIAL_COMMITS[@]}" | sort -u))
-        
+
         if [[ ${#UNIQUE_COMMITS[@]} -eq 0 ]]; then
             echo "No potential original commits found from branch differences."
             echo "You may need to specify the original commit manually."
@@ -169,10 +169,10 @@ if [[ -z "$ORIGINAL_COMMIT" ]]; then
                 subject=$(git log --format="%s" -n 1 "$commit" 2>/dev/null || echo "Invalid commit")
                 echo "  $((i+1)). $commit - $subject"
             done
-            
+
             echo
             read -p "Enter the original commit (number or commit hash): " input
-            
+
             if [[ "$input" =~ ^[0-9]+$ ]] && [[ "$input" -ge 1 ]] && [[ "$input" -le ${#UNIQUE_COMMITS[@]} ]]; then
                 ORIGINAL_COMMIT="${UNIQUE_COMMITS[$((input-1))]}"
             else
@@ -366,13 +366,13 @@ if [[ -s "$TEMP_PATCH" ]]; then
     # Apply remaining changes
     echo "Applying remaining changes..."
     git apply "$TEMP_PATCH"
-    
+
     # Check if there are changes to commit
     if [[ -n $(git status --porcelain) ]]; then
-        # Extract original merged commit message 
+        # Extract original merged commit message
         MERGED_MSG=$(git log --format="%B" -n 1 "$MERGED_COMMIT_HASH")
         ORIGINAL_MSG=$(git log --format="%B" -n 1 "$ORIGINAL_COMMIT_HASH")
-        
+
         # Create commit message for remaining changes
         NEW_MSG="Remaining changes (split from amended commit)
 
@@ -383,7 +383,7 @@ Original commit that was split out:
 $ORIGINAL_COMMIT_HASH - $(echo "$ORIGINAL_MSG" | head -1)
 
 🤖 Generated with git-split-amended-commit"
-        
+
         git add -A
         git commit -m "$NEW_MSG"
         echo "Created new commit with remaining changes"
@@ -402,7 +402,7 @@ if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
     echo
     echo "Rebasing ${#COMMITS_AFTER[@]} commits that came after the merged commit..."
     echo "This preserves your commit history: E -> F becomes E' -> F'"
-    
+
     # Use git rebase --onto to move the commits after the merged commit
     # onto the new split commits. This transforms:
     # A -> B -> [merged:C+D] -> E -> F
@@ -414,7 +414,7 @@ if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
         echo "To abort: git reset --hard $BACKUP_BRANCH"
         exit 1
     fi
-    
+
     echo "✓ Successfully rebased ${#COMMITS_AFTER[@]} commits"
 fi
 

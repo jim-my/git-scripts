@@ -109,11 +109,11 @@ error_exit() {
 # Dependency checks
 check_dependencies() {
     echo -e "${CYAN}[INFO] Checking dependencies...${NC}"
-    
+
     if ! command -v git-filter-repo >/dev/null 2>&1; then
         error_exit "git-filter-repo not found\nInstall with one of:\n  pip install git-filter-repo\n  brew install git-filter-repo\n  apt install git-filter-repo"
     fi
-    
+
     echo -e "${GREEN}[✓] git-filter-repo found${NC}"
 }
 
@@ -127,14 +127,14 @@ check_git_repo() {
 # Working directory cleanliness check
 check_working_directory_clean() {
     echo -e "${CYAN}[INFO] Checking working directory...${NC}"
-    
+
     # Check for concurrent git operations
     if [[ -f ".git/index.lock" ]]; then
         echo -e "${RED}[ERROR] Git operation in progress (index.lock exists)${NC}"
         echo "Wait for completion or remove stale lock file"
         error_exit "Concurrent git operation detected"
     fi
-    
+
     # Check for staged changes
     if git status --porcelain | grep -q '^[MADRC]'; then
         echo -e "${RED}[ERROR] Staged changes detected${NC}"
@@ -142,7 +142,7 @@ check_working_directory_clean() {
         git status --porcelain | grep '^[MADRC]'
         error_exit "Repository has staged changes"
     fi
-    
+
     # Check for unstaged changes
     if ! git diff-index --quiet HEAD --; then
         echo -e "${RED}[ERROR] Working directory has uncommitted changes${NC}"
@@ -150,7 +150,7 @@ check_working_directory_clean() {
         git status --porcelain
         error_exit "Repository has uncommitted changes"
     fi
-    
+
     # Check for untracked files
     if git status --porcelain | grep -q '^??'; then
         echo -e "${YELLOW}[WARN] Untracked files detected${NC}"
@@ -162,7 +162,7 @@ check_working_directory_clean() {
             error_exit "Operation cancelled - please handle untracked files first"
         fi
     fi
-    
+
     echo -e "${GREEN}[✓] Working directory is clean${NC}"
 }
 
@@ -172,12 +172,12 @@ check_remote_safety() {
         echo -e "${YELLOW}[WARN] Skipping remote safety check (--force used)${NC}"
         return 0
     fi
-    
+
     echo -e "${CYAN}[INFO] Checking remote safety...${NC}"
-    
+
     local current_branch
     current_branch=$(git branch --show-current)
-    
+
     # Check if branch has a remote tracking branch
     if git config --get "branch.${current_branch}.remote" >/dev/null 2>&1; then
         local remote_branch
@@ -185,9 +185,9 @@ check_remote_safety() {
         local remote_name
         remote_name=$(git config --get "branch.${current_branch}.remote")
         local remote_ref="${remote_name}/${remote_branch}"
-        
+
         echo -e "${YELLOW}[WARN] Current branch '${current_branch}' tracks '${remote_ref}'${NC}"
-        
+
         # First check if remote ref exists locally
         if ! git rev-parse --verify "$remote_ref" >/dev/null 2>&1; then
             echo -e "${RED}[ERROR] Remote reference '${remote_ref}' not found locally${NC}"
@@ -195,12 +195,12 @@ check_remote_safety() {
             echo "Run 'git fetch' first, or use --force if you're certain this is safe."
             error_exit "Cannot verify remote status - run 'git fetch' first or use --force"
         fi
-        
+
         # Check the relationship between local and remote
         local local_commit remote_commit
         local_commit=$(git rev-parse HEAD)
         remote_commit=$(git rev-parse "$remote_ref")
-        
+
         if [[ "$local_commit" == "$remote_commit" ]]; then
             echo -e "${RED}[ERROR] Branch is identical to remote (fully pushed)${NC}"
             echo "Rewriting history on pushed branches is extremely dangerous!"
@@ -208,7 +208,7 @@ check_remote_safety() {
             echo "Use --force only if you're absolutely certain and have coordinated with your team."
             error_exit "Operation blocked for safety - branch is fully pushed to remote"
         fi
-        
+
         # Check if local is ahead of remote
         if git merge-base --is-ancestor "$remote_ref" HEAD; then
             local unpushed_count
@@ -229,60 +229,60 @@ check_remote_safety() {
 # Path validation and sanitization
 validate_and_sanitize_path() {
     local path="$1"
-    
+
     # Check for empty path
     if [[ -z "$path" ]]; then
         echo -e "${RED}[ERROR] Path cannot be empty${NC}"
         exit 1
     fi
-    
+
     # Check for whitespace-only path
     if [[ "$path" =~ ^[[:space:]]*$ ]]; then
         echo -e "${RED}[ERROR] Path cannot be whitespace-only${NC}"
         exit 1
     fi
-    
+
     # Basic sanitization - remove dangerous characters
     if echo "$path" | grep -qE '[;&|`$()]'; then
         echo -e "${RED}[ERROR] Path contains potentially dangerous characters: $path${NC}"
         exit 1
     fi
-    
+
     # Normalize path (remove double slashes, trailing slashes)
     path=$(echo "$path" | sed 's|//*|/|g' | sed 's|/$||')
-    
+
     # Final validation - ensure path is not just slashes or dots
     if [[ "$path" =~ ^[./]*$ ]]; then
         echo -e "${RED}[ERROR] Invalid path pattern: $path${NC}"
         exit 1
     fi
-    
+
     echo "$path"
 }
 
 # Check if path exists in Git history
 check_path_in_history() {
     local path="$1"
-    
+
     echo -e "${CYAN}[INFO] Analyzing path '$path' in Git history...${NC}"
-    
+
     if git log --all --full-history --oneline -- "$path" >/dev/null 2>&1; then
         local commit_count
         commit_count=$(git log --all --oneline --full-history -- "$path" | wc -l | tr -d ' ')
-        
+
         if [[ "$commit_count" -gt 0 ]]; then
             echo -e "${CYAN}[INFO] Found $commit_count commits containing '$path'${NC}"
             return 0
         fi
     fi
-    
+
     echo -e "${YELLOW}[WARN] Path '$path' not found in Git history${NC}"
     echo "This operation will have no effect."
-    
+
     if [[ "$APPLY" == true ]]; then
         error_exit "Cannot remove non-existent path"
     fi
-    
+
     return 1
 }
 
@@ -292,53 +292,53 @@ create_backup() {
     timestamp=$(date +%Y%m%d_%H%M%S)
     local current_branch
     current_branch=$(git branch --show-current)
-    
+
     BACKUP_BRANCH="backup_${current_branch}_${timestamp}"
-    
+
     echo -e "${CYAN}[INFO] Creating backup branch: $BACKUP_BRANCH${NC}"
-    
+
     if ! git branch "$BACKUP_BRANCH"; then
         error_exit "Failed to create backup branch: $BACKUP_BRANCH"
     fi
-    
+
     echo -e "${GREEN}[✓] Backup branch created: $BACKUP_BRANCH${NC}"
 }
 
 # Enhanced dry-run mode
 perform_dry_run() {
     local path="$1"
-    
+
     echo
     echo -e "${BOLD}=== DRY-RUN MODE ===${NC}"
     echo -e "${YELLOW}This is a preview. No changes will be made.${NC}"
     echo
-    
+
     echo -e "${CYAN}Target path:${NC} $path"
     echo
-    
+
     if check_path_in_history "$path"; then
         echo -e "${CYAN}Files/directories that would be removed:${NC}"
         git log --all --full-history --name-only --pretty=format: -- "$path" 2>/dev/null | sort -u | grep -v '^$' | head -20 | sed 's/^/  /'
-        
+
         local total_files
         total_files=$(git log --all --full-history --name-only --pretty=format: -- "$path" 2>/dev/null | sort -u | grep -v '^$' | wc -l | tr -d ' ')
         if [[ "$total_files" -gt 20 ]]; then
             echo "  ... and $((total_files - 20)) more files"
         fi
         echo
-        
+
         echo -e "${CYAN}Recent commits that would be modified:${NC}"
         git log --oneline --max-count=10 --all --full-history -- "$path" 2>/dev/null | sed 's/^/  /' || true
         echo
-        
+
         # Show current repository size
         echo -e "${CYAN}Current repository size:${NC} $(du -sh .git 2>/dev/null | cut -f1 || echo "Unknown")"
-        
+
         if [[ -e "$path" ]]; then
             echo -e "${CYAN}Current path size on disk:${NC} $(du -sh "$path" 2>/dev/null | cut -f1 || echo "Unknown")"
         fi
     fi
-    
+
     echo
     echo -e "${YELLOW}What would happen:${NC}"
     echo "1. Create backup branch: backup_\$(current_branch)_\$(timestamp)"
@@ -365,16 +365,16 @@ perform_dry_run() {
 # Perform the actual removal
 perform_removal() {
     local path="$1"
-    
+
     echo
     echo -e "${CYAN}[INFO] Removing '$path' from Git history...${NC}"
     echo -e "${YELLOW}[WARN] This may take a while for large repositories...${NC}"
-    
+
     # Store remote configurations before git-filter-repo removes them
     local remotes_backup=$(mktemp)
     local tracking_backup=$(mktemp)
     git remote -v > "$remotes_backup" 2>/dev/null || true
-    
+
     # Store branch tracking configurations
     local current_branch=$(git branch --show-current)
     if [[ -n "$current_branch" ]]; then
@@ -384,7 +384,7 @@ perform_removal() {
             git config --get "branch.${current_branch}.merge" 2>/dev/null && echo "merge=$(git config --get "branch.${current_branch}.merge")" || true
         } > "$tracking_backup"
     fi
-    
+
     # Use git-filter-repo to remove the path
     if ! git filter-repo --path "$path" --invert-paths --force; then
         echo -e "${RED}[ERROR] git-filter-repo failed${NC}"
@@ -393,7 +393,7 @@ perform_removal() {
         rm -f "$remotes_backup" "$tracking_backup"
         error_exit "History rewriting operation failed"
     fi
-    
+
     # Restore remote configurations (git-filter-repo removes them as safety)
     echo -e "${CYAN}[INFO] Restoring remote configurations...${NC}"
     if [[ -s "$remotes_backup" ]]; then
@@ -402,7 +402,7 @@ perform_removal() {
                 local remote_name=$(echo "$remote_line" | awk '{print $1}')
                 local remote_url=$(echo "$remote_line" | awk '{print $2}')
                 local remote_type=$(echo "$remote_line" | awk '{print $3}' | tr -d '()')
-                
+
                 # Only add fetch URLs (avoid duplicating push URLs)
                 if [[ "$remote_type" == "fetch" ]] || [[ -z "$remote_type" ]]; then
                     if ! git remote add "$remote_name" "$remote_url" 2>/dev/null; then
@@ -415,7 +415,7 @@ perform_removal() {
     else
         echo -e "${YELLOW}[WARN] No remote configurations to restore${NC}"
     fi
-    
+
     # Restore branch tracking configurations
     echo -e "${CYAN}[INFO] Restoring branch tracking configurations...${NC}"
     if [[ -s "$tracking_backup" ]]; then
@@ -430,7 +430,7 @@ perform_removal() {
     else
         echo -e "${YELLOW}[WARN] No branch tracking backup found${NC}"
     fi
-    
+
     rm -f "$remotes_backup" "$tracking_backup"
     echo -e "${GREEN}[✓] Path removed from history${NC}"
 }
@@ -438,9 +438,9 @@ perform_removal() {
 # Verify removal was successful
 verify_removal() {
     local path="$1"
-    
+
     echo -e "${CYAN}[INFO] Verifying removal...${NC}"
-    
+
     # Check if path still exists in history
     if git log --all --full-history --oneline -- "$path" 2>/dev/null | head -1 | grep -q .; then
         echo -e "${RED}[ERROR] Path '$path' still appears in git history${NC}"
@@ -448,14 +448,14 @@ verify_removal() {
         echo -e "${CYAN}[INFO] You can recover using backup branch: $BACKUP_BRANCH${NC}"
         exit 1
     fi
-    
+
     echo -e "${GREEN}[✓] Path successfully removed from git history${NC}"
-    
+
     # Clean up refs and reflog
     echo -e "${CYAN}[INFO] Cleaning up refs and reflog...${NC}"
     git reflog expire --expire=now --all >/dev/null 2>&1 || true
     git gc --prune=now --aggressive >/dev/null 2>&1 || true
-    
+
     # Show final size
     echo -e "${CYAN}[INFO] Final repository size:${NC} $(du -sh .git 2>/dev/null | cut -f1 || echo "Unknown")"
 }
@@ -465,7 +465,7 @@ parse_arguments() {
     if [[ $# -eq 0 ]]; then
         usage
     fi
-    
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --path)
@@ -487,7 +487,7 @@ parse_arguments() {
         esac
         shift
     done
-    
+
     if [[ -z "$TARGET_PATH" ]]; then
         error_exit "--path is required\nUse --help for usage information"
     fi
@@ -496,7 +496,7 @@ parse_arguments() {
 # Final confirmation for destructive operation
 get_final_confirmation() {
     local path="$1"
-    
+
     echo
     echo -e "${RED}${BOLD}⚠️  FINAL WARNING ⚠️${NC}"
     echo -e "${RED}This will PERMANENTLY remove '$path' from ALL Git history!${NC}"
@@ -515,35 +515,35 @@ get_final_confirmation() {
 main() {
     echo -e "${BOLD}=== Git History Removal Tool ===${NC}"
     echo
-    
+
     parse_arguments "$@"
     check_dependencies
     check_git_repo
     check_working_directory_clean
-    
+
     TARGET_PATH=$(validate_and_sanitize_path "$TARGET_PATH")
-    
+
     echo -e "${CYAN}Repository:${NC} $(git rev-parse --show-toplevel)"
     echo -e "${CYAN}Current branch:${NC} $(git branch --show-current)"
     echo -e "${CYAN}Target path:${NC} $TARGET_PATH"
     echo
-    
+
     # Dry-run mode
     if [[ "$APPLY" == false ]]; then
         perform_dry_run "$TARGET_PATH"
         exit 0
     fi
-    
+
     # Apply mode - additional safety checks
     check_remote_safety
     check_path_in_history "$TARGET_PATH" || exit 1
-    
+
     create_backup
     get_final_confirmation "$TARGET_PATH"
-    
+
     perform_removal "$TARGET_PATH"
     verify_removal "$TARGET_PATH"
-    
+
     echo
     echo -e "${GREEN}${BOLD}[SUCCESS] Operation completed successfully!${NC}"
     echo

@@ -150,12 +150,12 @@ if [[ "$REMOVE_FOLDER" == true ]]; then
         echo "Folder extraction completed, but not removed from original repo."
         exit 0
     fi
-    
+
     git rm -r "$FOLDER_PATH"
     git commit -m "Remove $FOLDER_PATH (extracted into separate repository)
 
 Extracted into: $ABS_TARGET_REPO"
-    
+
     echo "Removed '$FOLDER_PATH' from original repository"
 fi
 

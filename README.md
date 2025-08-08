@@ -38,7 +38,7 @@ git wtf                          # Enhanced status
 
 ### 🔍 **Duplicate & History Management**
 - **git-check-dup** - Find commits with identical content between branches
-- **git-remove-redundant-commits** - Remove duplicate commits and rebase cleanly  
+- **git-remove-redundant-commits** - Remove duplicate commits and rebase cleanly
 - **git-remove-from-history** - Completely remove files/directories from history
 - **git-search-in-each-commit** - Search for patterns across commit history
 - **git-when-reached-branch** - Track when commits reached specific branches
@@ -246,7 +246,7 @@ Some scripts work better together:
 
 ### A-D
 - git-amend
-- git-branch-current  
+- git-branch-current
 - git-branch-diff
 - git-branch-new_and_track
 - git-branch-not-merged

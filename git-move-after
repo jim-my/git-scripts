@@ -3,7 +3,7 @@
 # git-move-after: Move a commit to be positioned after another commit
 #
 # This script provides an intuitive way to reorder commits without using
-# interactive rebase. It moves a given commit to be positioned after 
+# interactive rebase. It moves a given commit to be positioned after
 # another specified commit, handling the rebase operations automatically.
 #
 # Key features:
@@ -27,7 +27,7 @@ USAGE:
 DESCRIPTION:
     Moves the specified commit to be positioned immediately after the target commit.
     This is more intuitive than using git rebase -i for simple commit reordering.
-    
+
     The script handles the rebase operations automatically and preserves any
     commits that come after the moved commit.
 
@@ -41,10 +41,10 @@ OPTIONS:
 EXAMPLES:
     # Move commit abc123 to be after commit def456
     git move-after abc123 def456
-    
+
     # Move HEAD to be after a specific commit
     git move-after HEAD def456
-    
+
     # Interactive mode - script will help you identify commits
     git move-after
 
@@ -234,7 +234,7 @@ fi
 # Now we need to rebase the commits that came after the moved commit
 if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
     echo "Rebasing commits that came after the moved commit..."
-    
+
     # The moved commit is now at HEAD, we need to rebase the later commits onto it
     if ! git rebase --onto HEAD "$COMMIT_TO_MOVE_HASH" "$BACKUP_BRANCH"; then
         echo "Error: Failed to rebase later commits. You may need to resolve conflicts manually."
@@ -242,7 +242,7 @@ if [[ ${#COMMITS_AFTER[@]} -gt 0 ]]; then
         echo "To abort: git rebase --abort && git reset --hard $BACKUP_BRANCH"
         exit 1
     fi
-    
+
     echo "✓ Successfully rebased ${#COMMITS_AFTER[@]} commits"
 fi
 

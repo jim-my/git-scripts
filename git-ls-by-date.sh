@@ -35,7 +35,7 @@ Options:
 
 Examples:
   git-ls-by-date                    # List files with dates from HEAD
-  git-ls-by-date --sort             # Sort by date (oldest first)  
+  git-ls-by-date --sort             # Sort by date (oldest first)
   git-ls-by-date main               # List files from main branch
 
 Output format: YYYY-MM-DD filename
@@ -62,7 +62,7 @@ check_git_repo() {
 parse_arguments() {
     COMMIT="HEAD"
     SORT_OUTPUT=false
-    
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
@@ -95,15 +95,15 @@ main() {
     parse_arguments "$@"
     check_git_repo
     validate_commit "$COMMIT"
-    
+
     echo "Listing files from commit: $COMMIT"
     echo
-    
+
     # Create temporary file for output
     local temp_file
     temp_file=$(mktemp)
     trap "rm -f '$temp_file'" EXIT
-    
+
     # Process each file safely using process substitution
     while IFS= read -r filename; do
         if [[ -n "$filename" ]]; then
@@ -116,7 +116,7 @@ main() {
             fi
         fi
     done < <(git ls-tree -r --name-only "$COMMIT" 2>/dev/null)
-    
+
     # Output results (sorted or unsorted)
     if [[ "$SORT_OUTPUT" == true ]]; then
         sort "$temp_file"

@@ -31,7 +31,7 @@ from enum import Enum
 
 class ConfidenceLevel(Enum):
     HIGH = "HIGH"
-    MEDIUM = "MEDIUM" 
+    MEDIUM = "MEDIUM"
     LOW = "LOW"
 
 
@@ -62,9 +62,9 @@ def run_git_command(cmd: List[str], check_returncode: bool = True) -> str:
     """Run a git command and return output"""
     try:
         result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
+            cmd,
+            capture_output=True,
+            text=True,
             check=check_returncode
         )
         return result.stdout.strip()
@@ -78,7 +78,7 @@ def get_commit_info(commit_sha: str) -> str:
     """Get formatted commit information"""
     try:
         return run_git_command([
-            'git', 'log', '-1', '--pretty=format:%h %ad %an %s', 
+            'git', 'log', '-1', '--pretty=format:%h %ad %an %s',
             '--date=short', commit_sha
         ])
     except GitCommandError:
@@ -118,16 +118,16 @@ def find_merge_commits(commit_sha: str, branch: str) -> List[str]:
         ancestry_commits = run_git_command([
             'git', 'rev-list', '--ancestry-path', f'{commit_sha}..{branch}'
         ]).split('\n')
-        
-        # Get commits on first-parent path  
+
+        # Get commits on first-parent path
         first_parent_commits = run_git_command([
             'git', 'rev-list', '--first-parent', f'{commit_sha}..{branch}'
         ]).split('\n')
-        
+
         # Find intersection (these are the merge commits)
         merge_commits = [c for c in ancestry_commits if c in first_parent_commits and c]
         return merge_commits
-        
+
     except GitCommandError:
         return []
 
@@ -137,38 +137,38 @@ def find_multi_level_merges(commit_sha: str, branch: str) -> List[str]:
     merge_chain = []
     current_commit = commit_sha
     current_branch = branch
-    
+
     while True:
         merges = find_merge_commits(current_commit, current_branch)
         if not merges:
             break
-            
+
         # Take the last merge (closest to target branch)
         merge_commit = merges[-1]
         merge_chain.append(merge_commit)
-        
+
         # Check if this merge directly contains our original commit
         try:
             parents = run_git_command([
                 'git', 'rev-list', '--parents', '-n', '1', merge_commit
             ]).split()[1:]  # Skip the commit itself, get parents
-            
+
             if current_commit in parents:
                 # Direct merge found
                 break
-                
+
             # Continue searching from this merge commit
             current_commit = merge_commit
-            
+
         except GitCommandError:
             break
-    
+
     return merge_chain
 
 
 def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> DetectionResult:
     """Main detection logic with comprehensive methods"""
-    
+
     # Resolve commit to full SHA
     try:
         commit_sha = resolve_commit_sha(commit_ref)
@@ -181,9 +181,9 @@ def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> 
             commit_info="Invalid commit or branch",
             details=str(e)
         )
-    
+
     commit_info = get_commit_info(commit_sha)
-    
+
     # Check if commit is even an ancestor of target branch
     if not is_ancestor_of(commit_sha, target_branch):
         return DetectionResult(
@@ -194,7 +194,7 @@ def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> 
             details=f"Commit is not an ancestor of {target_branch}",
             caveat="Commit never reached target branch, or was squash merged/cherry-picked (original SHA lost)"
         )
-    
+
     # Method 1: Look for merge commits (highest confidence)
     merge_commits = find_merge_commits(commit_sha, target_branch)
     if merge_commits:
@@ -207,7 +207,7 @@ def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> 
             details=f"Found via explicit merge commit",
             merge_chain=merge_commits if len(merge_commits) > 1 else None
         )
-    
+
     # Method 2: Check if on first-parent path (ambiguous case)
     if is_on_first_parent_path(commit_sha, target_branch):
         return DetectionResult(
@@ -218,7 +218,7 @@ def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> 
             details="Commit is on first-parent path of target branch",
             caveat="Cannot distinguish between direct commit and fast-forward merge (Git limitation)"
         )
-    
+
     # Method 3: Multi-level merge detection
     multi_merges = find_multi_level_merges(commit_sha, target_branch)
     if multi_merges:
@@ -231,7 +231,7 @@ def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> 
             details="Found via multi-level merge chain",
             merge_chain=multi_merges
         )
-    
+
     # Should not reach here under best practices
     return DetectionResult(
         method=DetectionMethod.NOT_FOUND,
@@ -245,7 +245,7 @@ def detect_when_reached_branch(commit_ref: str, target_branch: str = "main") -> 
 
 def format_result(result: DetectionResult, target_branch: str) -> str:
     """Format detection result for display"""
-    
+
     if result.method == DetectionMethod.NOT_FOUND:
         icon = "❌"
         status = "NOT FOUND"
@@ -255,24 +255,24 @@ def format_result(result: DetectionResult, target_branch: str) -> str:
     else:
         icon = "⚠️ "
         status = "FOUND"
-    
+
     output = [
         f"{icon} {status}: {result.method.value}",
         f"   Target: {result.commit_info}",
         f"   Confidence: {result.confidence.value}",
         f"   Details: {result.details}"
     ]
-    
+
     if result.merge_chain and len(result.merge_chain) > 1:
         output.append(f"   Merge chain: {len(result.merge_chain)} levels")
         for i, merge_sha in enumerate(result.merge_chain):
             merge_info = get_commit_info(merge_sha)
             output.append(f"     {i+1}. {merge_info}")
-    
+
     if result.caveat:
         output.append("")
         output.append(f"   ⚠️  CAVEAT: {result.caveat}")
-    
+
     if result.method == DetectionMethod.NOT_FOUND and "never reached" not in result.details:
         output.append("")
         output.append("   Possible reasons:")
@@ -280,7 +280,7 @@ def format_result(result: DetectionResult, target_branch: str) -> str:
         output.append("   - Squash merged (original SHA lost)")
         output.append("   - Cherry-picked (new SHA created)")
         output.append("   - History was rewritten (violates best practices)")
-    
+
     return "\n".join(output)
 
 
@@ -289,37 +289,37 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     parser.add_argument(
         'commit',
         help='The commit to track (SHA, branch name, tag, etc.)'
     )
-    
+
     parser.add_argument(
         'target_branch',
         nargs='?',
         default='main',
         help='Target branch to check (default: main)'
     )
-    
+
     parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Show additional debugging information'
     )
-    
+
     args = parser.parse_args()
-    
+
     try:
         result = detect_when_reached_branch(args.commit, args.target_branch)
         print(format_result(result, args.target_branch))
-        
+
         if args.verbose:
             print(f"\nDEBUG INFO:")
             print(f"  Commit SHA: {result.commit_sha}")
             print(f"  Detection method: {result.method.value}")
             print(f"  Confidence: {result.confidence.value}")
-        
+
         # Exit code based on confidence
         if result.method == DetectionMethod.NOT_FOUND:
             sys.exit(1)
@@ -327,7 +327,7 @@ def main():
             sys.exit(2)  # Found but ambiguous
         else:
             sys.exit(0)  # Found with high confidence
-            
+
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(3)

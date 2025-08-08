@@ -94,27 +94,27 @@ parse_arguments() {
 main() {
     parse_arguments "$@"
     check_git_repo
-    
+
     # Validate branches exist
     validate_branch "$BRANCH1"
     validate_branch "$BRANCH2"
-    
+
     # Check if branches are the same
     local branch1_commit branch2_commit
     branch1_commit=$(git rev-parse "$BRANCH1")
     branch2_commit=$(git rev-parse "$BRANCH2")
-    
+
     if [[ "$branch1_commit" == "$branch2_commit" ]]; then
         error_exit "Both branches point to the same commit"
     fi
-    
+
     # Detect OS and set vim options
     local os
     os=$(uname)
-    
+
     echo "Comparing commit logs: $BRANCH1 vs $BRANCH2"
     echo "Press :q to exit vim when done."
-    
+
     # Use appropriate vim options based on OS
     if [[ "$os" == 'Darwin' ]]; then
         vim -d <(git log "$BRANCH1" --oneline) <(git log "$BRANCH2" --oneline)

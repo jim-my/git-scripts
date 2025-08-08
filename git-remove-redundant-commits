@@ -155,6 +155,8 @@ if [[ -n "$duplicates_output" ]]; then
     echo -e "${YELLOW}[INFO] Duplicate commits detected (same content):${NC}"
     echo "$duplicates_output" | while read -r local_hash remote_hash patch_id; do
         echo "    ${local_hash:0:8} is duplicate of ${remote_hash:0:8} (patch: ${patch_id:0:8})"
+        echo "        * $(git show --no-patch --pretty=format:"%H%n%B" ${local_hash} --oneline)"
+        echo "        * $(git show --no-patch --pretty=format:"%H%n%B" ${remote_hash} --oneline)"
     done
 else
     echo -e "${GREEN}[INFO] No duplicate commits detected.${NC}"
@@ -179,7 +181,7 @@ git rebase "$remote_branch" || {
     exit 1
 }
 
-# Phase 2: Rebase cleaned commits onto target branch  
+# Phase 2: Rebase cleaned commits onto target branch
 # Now conflict-free since duplicates were removed in Phase 1
 echo -e "${CYAN}[INFO] Phase 2: Rebasing cleaned commits onto ${onto_branch}...${NC}"
 git rebase "$onto_branch" || {

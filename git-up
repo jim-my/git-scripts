@@ -27,7 +27,7 @@ DESCRIPTION:
     Like git-pull but shows a short and informative summary of changes
     immediately after pulling. When invoked as 'git-reup', automatically
     uses --rebase flag.
-    
+
     Shows:
     - Abbreviated commit log of new changes
     - Diffstat summary (for rebase operations)
@@ -35,17 +35,17 @@ DESCRIPTION:
 
 OPTIONS:
     --help    Show this help message
-    
+
     All other options are passed directly to git pull.
 
 EXAMPLES:
     # Pull with merge and show changes
     git up
-    
-    # Pull with rebase and show changes  
+
+    # Pull with rebase and show changes
     git reup
     # or: git up --rebase
-    
+
     # Pull from specific remote/branch
     git up origin main
 
@@ -152,7 +152,7 @@ fi
 if git rev-parse --verify HEAD@{1} >/dev/null 2>&1; then
     COMMIT_COUNT=$(git rev-list --count HEAD@{1}..HEAD 2>/dev/null || echo "0")
     echo "New commits ($COMMIT_COUNT):"
-    
+
     if [[ "$COMMIT_COUNT" -gt 0 ]]; then
         git log --color --pretty=format:"  %C(yellow)%h%C(reset) %s %C(dim)(%an, %ar)%C(reset)" HEAD@{1}..
         echo
