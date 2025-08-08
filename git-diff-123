@@ -2,49 +2,62 @@
 # encoding: utf-8
 
 require 'tempfile'
+require 'tmpdir'
 
-file = ARGV.shift
-unless file
+def get_git_editor
+  editor = `git config core.editor`.strip
+  editor.empty? ? 'vim' : editor
+end
+
+def check_merge_conflict(file)
+  `git ls-files -u #{file}`.strip.empty?
+end
+
+def main
+  file = ARGV.shift
+  unless file
     puts("USAGE: #{File.basename __FILE__} FILE")
     exit 0
+  end
+
+  if check_merge_conflict(file)
+    puts "Error: '#{file}' is not in a merge conflict state."
+    exit 1
+  end
+
+  editor = get_git_editor
+
+  Dir.mktmpdir do |tmpdir|
+    file_theirs = File.join(tmpdir, 'theirs')
+    file_ours = File.join(tmpdir, 'ours')
+
+    system "git show :3:#{file} > #{file_theirs}"
+    system "git show :2:#{file} > #{file_ours}"
+
+    loop do
+      puts "
+Choose a diff to view for '#{file}':"
+      puts "1. Theirs vs. Merged"
+      puts "2. Ours vs. Merged"
+      puts "3. Theirs vs. Ours"
+      puts "q. Quit"
+      print "> "
+      choice = STDIN.gets.strip
+
+      case choice
+      when '1'
+        system "#{editor} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file}"
+      when '2'
+        system "#{editor} -c 'set diffopt+=iwhite' -d #{file_ours} #{file}"
+      when '3'
+        system "#{editor} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file_ours}"
+      when 'q'
+        break
+      else
+        puts "Invalid choice."
+      end
+    end
+  end
 end
 
-
-if `uname`.strip.downcase == 'darwin'
-    # vim_cmd = 'mvim'
-    vim_cmd = 'vim'
-else
-    vim_cmd = 'vim -g'
-end
-
-file_dir, file = File.split file
-
-file_theirs = File.join(file_dir, 'tmp.theirs.'+file)
-file_ours = File.join(file_dir, 'tmp.ours.'+file)
-file = File.join(file_dir, file)
-
-#commonbase = `git show :1:#{file}`             # common base
-system "git show :3:#{file} > #{file_theirs}"   # theirs
-system "git show :2:#{file} > #{file_ours}"     # ours
-#system "cp #{file} #{file}.merged.tmp"              # merged
-
-cmd1 = "#{vim_cmd} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file}"
-cmd2 = "#{vim_cmd} -c 'set diffopt+=iwhite' -d #{file_ours} #{file}"
-cmd3 = "#{vim_cmd} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file_ours}"
-
-cmds = []
-cmds << cmd1
-cmds << cmd2
-cmds << cmd3
-
-puts cmds
-
-cmds.each do |cmd|
-    system cmd
-end
-
-# this is readonly, not good
-#
-cmd = "git difftool :2:#{file} :3:#{file}"
-puts "Or run this command(but these files will be readonly) - 1: current, 2: ours, 3: theirs"
-puts '> ' + cmd
+main
