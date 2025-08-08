@@ -13,10 +13,73 @@ def check_merge_conflict(file)
   `git ls-files -u #{file}`.strip.empty?
 end
 
+def extract_conflict_files(file)
+  if check_merge_conflict(file)
+    puts "Error: '#{file}' is not in a merge conflict state."
+    exit 1
+  end
+
+  tmpdir = Dir.mktmpdir("git-diff-123-")
+  file_theirs = File.join(tmpdir, 'theirs')
+  file_ours = File.join(tmpdir, 'ours')
+  file_base = File.join(tmpdir, 'base')
+
+  system "git show :3:#{file} > #{file_theirs}"
+  system "git show :2:#{file} > #{file_ours}"
+  system "git show :1:#{file} > #{file_base}"
+
+  puts "#{tmpdir}:#{file_ours}:#{file_base}:#{file_theirs}"
+end
+
+def remerge_from_files(file, ours_path, base_path, theirs_path)
+  unless File.exist?(ours_path) && File.exist?(base_path) && File.exist?(theirs_path)
+    puts "Error: One or more temp files not found"
+    exit 1
+  end
+
+  puts "Re-merging with edited files..."
+  merge_result = `git merge-file #{ours_path} #{base_path} #{theirs_path} 2>&1`
+  system "cp #{ours_path} #{file}"
+
+  if $?.success?
+    puts "Clean merge successful! Applied to #{file}"
+    puts "\nShowing diff and staging file..."
+    system "git diff #{file}"
+    system "git add #{file}"
+    puts "File staged successfully."
+  else
+    puts "Merge created with conflicts. Check #{file} for conflict markers."
+    puts "\nShowing current state:"
+    system "git diff #{file}"
+  end
+end
+
 def main
+  if ARGV[0] == '--extract'
+    file = ARGV[1]
+    unless file
+      puts("USAGE: #{File.basename __FILE__} --extract FILE")
+      exit 0
+    end
+    extract_conflict_files(file)
+    return
+  end
+
+  if ARGV[0] == '--remerge'
+    file, ours_path, base_path, theirs_path = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
+    unless file && ours_path && base_path && theirs_path
+      puts("USAGE: #{File.basename __FILE__} --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
+      exit 0
+    end
+    remerge_from_files(file, ours_path, base_path, theirs_path)
+    return
+  end
+
   file = ARGV.shift
   unless file
     puts("USAGE: #{File.basename __FILE__} FILE")
+    puts("       #{File.basename __FILE__} --extract FILE")
+    puts("       #{File.basename __FILE__} --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
     exit 0
   end
 
@@ -30,9 +93,11 @@ def main
   Dir.mktmpdir do |tmpdir|
     file_theirs = File.join(tmpdir, 'theirs')
     file_ours = File.join(tmpdir, 'ours')
+    file_base = File.join(tmpdir, 'base')
 
     system "git show :3:#{file} > #{file_theirs}"
     system "git show :2:#{file} > #{file_ours}"
+    system "git show :1:#{file} > #{file_base}"
 
     loop do
       puts "
@@ -40,6 +105,7 @@ Choose a diff to view for '#{file}':"
       puts "1. Theirs vs. Merged"
       puts "2. Ours vs. Merged"
       puts "3. Theirs vs. Ours"
+      puts "4. Re-merge with edited files"
       puts "q. Quit"
       print "> "
       choice = STDIN.gets.strip
@@ -51,6 +117,22 @@ Choose a diff to view for '#{file}':"
         system "#{editor} -c 'set diffopt+=iwhite' -d #{file_ours} #{file}"
       when '3'
         system "#{editor} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file_ours}"
+      when '4'
+        puts "Re-merging with edited files..."
+        merge_result = `git merge-file #{file_ours} #{file_base} #{file_theirs} 2>&1`
+        system "cp #{file_ours} #{file}"
+
+        if $?.success?
+          puts "Clean merge successful! Applied to #{file}"
+          puts "\nShowing diff and staging file..."
+          system "git diff #{file}"
+          system "git add #{file}"
+          puts "File staged successfully."
+        else
+          puts "Merge created with conflicts. Check #{file} for conflict markers."
+          puts "\nShowing current state:"
+          system "git diff #{file}"
+        end
       when 'q'
         break
       else

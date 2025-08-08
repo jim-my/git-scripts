@@ -42,6 +42,8 @@ class GitScriptsMCP:
             "git_branch_diff": self._handle_git_branch_diff,
             "git_find_file": self._handle_git_find_file,
             "git_diff_patch": self._handle_git_diff_patch,
+            "git_extract_conflict_files": self._handle_git_extract_conflict_files,
+            "git_remerge_from_files": self._handle_git_remerge_from_files,
         }
 
     def setup_tools(self):
@@ -256,6 +258,62 @@ class GitScriptsMCP:
                         },
                     },
                     "required": ["commit1", "commit2"],
+                },
+            ),
+
+            Tool(
+                name="git_extract_conflict_files",
+                description=(
+                    """🔄 Extract conflict files for manual editing during merge conflicts.
+                    Creates temporary files containing 'ours', 'theirs', and 'base' versions
+                    of a conflicted file. Returns file paths for manual editing.
+
+                    📋 USE WHEN: Need to manually resolve complex merge conflicts by editing
+                    individual versions before re-merging."""
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "description": "Path to the conflicted file",
+                        },
+                    },
+                    "required": ["file"],
+                },
+            ),
+
+            Tool(
+                name="git_remerge_from_files",
+                description=(
+                    """🔧 Re-merge using edited conflict files. Performs a fresh 3-way merge
+                    using previously extracted and edited 'ours', 'theirs', and 'base' files.
+                    Automatically shows diff and stages the result if merge is clean.
+
+                    📋 USE WHEN: After editing extracted conflict files, need to apply the
+                    changes back to the original conflicted file."""
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "description": "Path to the original conflicted file",
+                        },
+                        "ours_path": {
+                            "type": "string",
+                            "description": "Path to the edited 'ours' file",
+                        },
+                        "base_path": {
+                            "type": "string",
+                            "description": "Path to the 'base' file",
+                        },
+                        "theirs_path": {
+                            "type": "string",
+                            "description": "Path to the edited 'theirs' file",
+                        },
+                    },
+                    "required": ["file", "ours_path", "base_path", "theirs_path"],
                 },
             ),
         ]
@@ -577,6 +635,95 @@ class GitScriptsMCP:
             content=[TextContent(
                 type="text",
                 text=f"❌ Git diff-patch failed:\n{result.stderr.decode()}",
+            )],
+            isError=True,
+        )
+
+    async def _handle_git_extract_conflict_files(self, args: Dict[str, Any]) -> CallToolResult:
+        """Extract conflict files using git-diff-123 --extract."""
+        file = args.get("file")
+        if not file:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text="❌ Error: file parameter is required",
+                )],
+                isError=True,
+            )
+
+        script_path = self._get_script_path("git-diff-123")
+        cmd = [str(script_path), "--extract", file]
+
+        result = await self._run_command(cmd)
+
+        if result.returncode == 0:
+            output = result.stdout.decode().strip()
+            # Parse the output: tmpdir:ours:base:theirs
+            parts = output.split(":")
+            if len(parts) >= 4:
+                tmpdir, ours, base, theirs = parts[0], parts[1], parts[2], parts[3]
+                return CallToolResult(
+                    content=[TextContent(
+                        type="text",
+                        text=(
+                            f"🔄 Conflict files extracted successfully:\n\n"
+                            f"📁 Temp directory: {tmpdir}\n"
+                            f"📄 Ours file: {ours}\n"
+                            f"📄 Base file: {base}\n"
+                            f"📄 Theirs file: {theirs}\n\n"
+                            f"💡 Edit the 'ours' and/or 'theirs' files as needed, then use git_remerge_from_files to apply changes."
+                        ),
+                    )],
+                )
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"❌ Unexpected output format:\n{output}",
+                )],
+                isError=True,
+            )
+
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text=f"❌ Git extract conflict files failed:\n{result.stderr.decode()}",
+            )],
+            isError=True,
+        )
+
+    async def _handle_git_remerge_from_files(self, args: Dict[str, Any]) -> CallToolResult:
+        """Re-merge using edited files via git-diff-123 --remerge."""
+        file = args.get("file")
+        ours_path = args.get("ours_path")
+        base_path = args.get("base_path")
+        theirs_path = args.get("theirs_path")
+
+        if not all([file, ours_path, base_path, theirs_path]):
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text="❌ Error: file, ours_path, base_path, and theirs_path are all required",
+                )],
+                isError=True,
+            )
+
+        script_path = self._get_script_path("git-diff-123")
+        cmd = [str(script_path), "--remerge", file, ours_path, base_path, theirs_path]
+
+        result = await self._run_command(cmd)
+
+        if result.returncode == 0:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"🔧 Re-merge completed successfully:\n\n{result.stdout.decode()}",
+                )],
+            )
+
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text=f"❌ Git remerge from files failed:\n{result.stderr.decode()}",
             )],
             isError=True,
         )
