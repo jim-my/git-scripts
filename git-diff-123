@@ -3,6 +3,7 @@
 
 require 'tempfile'
 require 'tmpdir'
+require 'json'
 
 def get_git_editor
   editor = `git config core.editor`.strip
@@ -13,9 +14,13 @@ def check_merge_conflict(file)
   `git ls-files -u #{file}`.strip.empty?
 end
 
-def extract_conflict_files(file)
+def extract_conflict_files(file, json_output = false)
   if check_merge_conflict(file)
-    puts "Error: '#{file}' is not in a merge conflict state."
+    if json_output
+      puts JSON.generate({error: "'#{file}' is not in a merge conflict state."})
+    else
+      puts "Error: '#{file}' is not in a merge conflict state."
+    end
     exit 1
   end
 
@@ -28,7 +33,16 @@ def extract_conflict_files(file)
   system "git show :2:#{file} > #{file_ours}"
   system "git show :1:#{file} > #{file_base}"
 
-  puts "#{tmpdir}:#{file_ours}:#{file_base}:#{file_theirs}"
+  if json_output
+    puts JSON.generate({
+      tmpdir: tmpdir,
+      ours: file_ours,
+      base: file_base,
+      theirs: file_theirs
+    })
+  else
+    puts "#{tmpdir}:#{file_ours}:#{file_base}:#{file_theirs}"
+  end
 end
 
 def remerge_from_files(file, ours_path, base_path, theirs_path)
@@ -55,13 +69,15 @@ def remerge_from_files(file, ours_path, base_path, theirs_path)
 end
 
 def main
+  json_output = ARGV.delete('--json')
+
   if ARGV[0] == '--extract'
     file = ARGV[1]
     unless file
-      puts("USAGE: #{File.basename __FILE__} --extract FILE")
+      puts("USAGE: #{File.basename __FILE__} --extract [--json] FILE")
       exit 0
     end
-    extract_conflict_files(file)
+    extract_conflict_files(file, json_output)
     return
   end
 
@@ -78,7 +94,7 @@ def main
   file = ARGV.shift
   unless file
     puts("USAGE: #{File.basename __FILE__} FILE")
-    puts("       #{File.basename __FILE__} --extract FILE")
+    puts("       #{File.basename __FILE__} --extract [--json] FILE")
     puts("       #{File.basename __FILE__} --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
     exit 0
   end

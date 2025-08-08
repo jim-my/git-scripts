@@ -652,16 +652,21 @@ class GitScriptsMCP:
             )
 
         script_path = self._get_script_path("git-diff-123")
-        cmd = [str(script_path), "--extract", file]
+        cmd = [str(script_path), "--extract", "--json", file]
 
         result = await self._run_command(cmd)
 
         if result.returncode == 0:
             output = result.stdout.decode().strip()
-            # Parse the output: tmpdir:ours:base:theirs
-            parts = output.split(":")
-            if len(parts) >= 4:
-                tmpdir, ours, base, theirs = parts[0], parts[1], parts[2], parts[3]
+            try:
+                import json
+                data = json.loads(output)
+                if "error" in data:
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=f"❌ {data['error']}")],
+                        isError=True,
+                    )
+                tmpdir, ours, base, theirs = data["tmpdir"], data["ours"], data["base"], data["theirs"]
                 return CallToolResult(
                     content=[TextContent(
                         type="text",
@@ -675,13 +680,14 @@ class GitScriptsMCP:
                         ),
                     )],
                 )
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"❌ Unexpected output format:\n{output}",
-                )],
-                isError=True,
-            )
+            except json.JSONDecodeError as e:
+                return CallToolResult(
+                    content=[TextContent(
+                        type="text",
+                        text=f"❌ Failed to parse JSON output:\n{output}\nError: {e}",
+                    )],
+                    isError=True,
+                )
 
         return CallToolResult(
             content=[TextContent(
