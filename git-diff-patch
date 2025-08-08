@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Compare patch IDs of two commits
+
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <commit1> <commit2>"
+    exit 1
+fi
+
+c1="$1"
+c2="$2"
+
+# Function to check if a commit reference is valid
+is_valid_commit() {
+    git rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1
+}
+
+if ! is_valid_commit "$c1"; then
+    echo "Error: '$c1' is not a valid commit reference."
+    exit 1
+fi
+
+if ! is_valid_commit "$c2"; then
+    echo "Error: '$c2' is not a valid commit reference."
+    exit 1
+fi
+
+id1=$(git show "$c1" | git patch-id --stable | cut -f1)
+id2=$(git show "$c2" | git patch-id --stable | cut -f1)
+
+echo "Commit $c1 patch-id: $id1"
+echo "Commit $c2 patch-id: $id2"
+
+if [ "$id1" = "$id2" ]; then
+    echo "✅ Patches are identical"
+else
+    echo "❌ Patches differ"
+fi
