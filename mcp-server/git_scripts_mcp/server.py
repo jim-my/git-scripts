@@ -656,31 +656,39 @@ class GitScriptsMCP:
 
         result = await self._run_command(cmd)
 
+        logger.info(f"Raw output from git-diff-123: {result.stdout.decode().strip()}")
+        logger.info(f"Stderr from git-diff-123: {result.stderr.decode().strip()}")
+        logger.info(f"Return code from git-diff-123: {result.returncode}")
+
         if result.returncode == 0:
             output = result.stdout.decode().strip()
             try:
                 import json
                 data = json.loads(output)
+                logger.info(f"Parsed JSON data: {data}")
                 if "error" in data:
+                    logger.error(f"Error reported by git-diff-123: {data['error']}")
                     return CallToolResult(
                         content=[TextContent(type="text", text=f"❌ {data['error']}")],
                         isError=True,
                     )
                 tmpdir, ours, base, theirs = data["tmpdir"], data["ours"], data["base"], data["theirs"]
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=(
-                            f"🔄 Conflict files extracted successfully:\n\n"
-                            f"📁 Temp directory: {tmpdir}\n"
-                            f"📄 Ours file: {ours}\n"
-                            f"📄 Base file: {base}\n"
-                            f"📄 Theirs file: {theirs}\n\n"
-                            f"💡 Edit the 'ours' and/or 'theirs' files as needed, then use git_remerge_from_files to apply changes."
-                        ),
-                    )],
+                result_content = TextContent(
+                    type="text",
+                    text=(
+                        f"🔄 Conflict files extracted successfully:\n\n"
+                        f"📁 Temp directory: {tmpdir}\n"
+                        f"📄 Ours file: {ours}\n"
+                        f"📄 Base file: {base}\n"
+                        f"📄 Theirs file: {theirs}\n\n"
+                        f"💡 Edit the 'ours' and/or 'theirs' files as needed, then use git_remerge_from_files to apply changes."
+                    ),
                 )
+                final_result = CallToolResult(content=[result_content])
+                logger.info(f"Returning CallToolResult: {final_result.model_dump_json()}")
+                return final_result
             except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON output: {output}\nError: {e}")
                 return CallToolResult(
                     content=[TextContent(
                         type="text",
@@ -689,6 +697,7 @@ class GitScriptsMCP:
                     isError=True,
                 )
 
+        logger.error(f"Git extract conflict files failed with return code {result.returncode}:\n{result.stderr.decode()}")
         return CallToolResult(
             content=[TextContent(
                 type="text",
