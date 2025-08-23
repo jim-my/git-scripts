@@ -4,6 +4,7 @@
 require 'tempfile'
 require 'tmpdir'
 require 'json'
+require 'fileutils'
 
 def get_git_editor
   editor = `git config core.editor`.strip
@@ -14,12 +15,70 @@ def check_merge_conflict(file)
   `git ls-files -u #{file}`.strip.empty?
 end
 
+def get_merge_base(ours, theirs)
+  # Try octopus merge-base first for criss-cross merges
+  base = `git merge-base --octopus #{ours} #{theirs} 2>/dev/null`.strip
+  if base.empty?
+    base = `git merge-base #{ours} #{theirs}`.strip
+  end
+  base
+end
+
+def has_write_tree_support?
+  `git merge-tree --help 2>/dev/null | grep -q -- '--write-tree'`
+  $?.success?
+end
+
+def simulate_merge_with_tree(base, ours, theirs)
+  if has_write_tree_support?
+    # Use modern --write-tree mode - but need correct syntax
+    merged_tree = `git merge-tree --write-tree #{ours} #{theirs} 2>&1`.strip
+    success = $?.success?
+
+    if success
+      # Check if there are differences vs both sides
+      ours_diff = `git diff --quiet #{ours} #{merged_tree} 2>/dev/null`
+      theirs_diff = `git diff --quiet #{theirs} #{merged_tree} 2>/dev/null`
+
+      {
+        success: true,
+        merged_tree: merged_tree,
+        has_ours_changes: !$?.success?,
+        has_theirs_changes: theirs_diff != 0
+      }
+    else
+      # Parse conflicts from stderr
+      {
+        success: false,
+        conflicts: merged_tree
+      }
+    end
+  else
+    # Fall back to traditional merge-tree output parsing
+    merge_output = `git merge-tree #{base} #{ours} #{theirs}`
+
+    if merge_output.strip.empty?
+      # Clean merge - no output means no conflicts
+      { success: true, clean: true }
+    else
+      # Check if it contains conflict markers
+      if merge_output.include?("changed in both") || merge_output.include?("<<<<<<< .our")
+        { success: false, merge_output: merge_output }
+      else
+        # Has changes but clean merge
+        { success: true, merge_output: merge_output }
+      end
+    end
+  end
+end
+
 def extract_conflict_files(file, json_output = false)
   if check_merge_conflict(file)
+    error_msg = "'#{file}' is not in a merge conflict state."
     if json_output
-      puts JSON.generate({error: "'#{file}' is not in a merge conflict state."})
+      puts JSON.generate({error: error_msg})
     else
-      puts "Error: '#{file}' is not in a merge conflict state."
+      puts "Error: #{error_msg}"
     end
     exit 1
   end
@@ -45,31 +104,209 @@ def extract_conflict_files(file, json_output = false)
   end
 end
 
+def create_temp_commit_with_edits(base_commit, file_path, edited_content, branch_name)
+  # Create a temporary branch from the base
+  temp_branch = "tmp-merge-sim-#{Time.now.to_i}-#{rand(1000)}"
+
+  `git checkout -b #{temp_branch} #{base_commit} 2>/dev/null`
+  unless $?.success?
+    puts "Failed to create temporary branch #{temp_branch}"
+    return nil
+  end
+
+  # Write the edited content to the file
+  File.write(file_path, edited_content)
+
+  # Commit the changes
+  `git add #{file_path}`
+  `git commit -m "temp: manual edits for merge simulation (#{branch_name})" 2>/dev/null`
+
+  if $?.success?
+    commit_hash = `git rev-parse HEAD`.strip
+    `git checkout - 2>/dev/null` # Go back to original branch
+    return commit_hash, temp_branch
+  else
+    `git checkout - 2>/dev/null`
+    `git branch -D #{temp_branch} 2>/dev/null`
+    return nil
+  end
+end
+
+def cleanup_temp_branch(branch_name)
+  `git branch -D #{branch_name} 2>/dev/null` if branch_name
+end
+
 def remerge_from_files(file, ours_path, base_path, theirs_path)
   unless File.exist?(ours_path) && File.exist?(base_path) && File.exist?(theirs_path)
     puts "Error: One or more temp files not found"
     exit 1
   end
 
-  puts "Re-merging with edited files..."
-  merge_result = `git merge-file #{ours_path} #{base_path} #{theirs_path} 2>&1`
+  # Get the current commits for ours, base, and theirs
+  # These are the blob hashes, we need the actual commit hashes
+  conflict_info = `git ls-files -u #{file}`.lines
 
-  if $?.success?
-    system "cp #{ours_path} #{file}"
-    puts "Clean merge successful! Applied to #{file}"
-    puts "\nShowing diff and staging file..."
-    system "git diff #{file}"
-    system "git add #{file}"
-    puts "File staged successfully."
-  else
-    puts "Re-merge failed with conflicts. Original file unchanged."
-    puts "Merge output: #{merge_result}" unless merge_result.strip.empty?
-    puts "To see the conflicted version, check the temporary file: #{ours_path}"
+  if conflict_info.length < 3
+    puts "Error: Could not get complete conflict information for #{file}"
+    exit 1
   end
+
+  # Parse the conflict info to get commit hashes
+  # Format: mode hash stage	path
+  base_info = conflict_info.find { |line| line.split("\t")[0].split(" ")[2] == "1" }
+  ours_info = conflict_info.find { |line| line.split("\t")[0].split(" ")[2] == "2" }
+  theirs_info = conflict_info.find { |line| line.split("\t")[0].split(" ")[2] == "3" }
+
+  unless base_info && ours_info && theirs_info
+    puts "Error: Could not parse conflict information for #{file}"
+    exit 1
+  end
+
+  base_blob = base_info.split(" ")[1]
+  ours_blob = ours_info.split(" ")[1]
+  theirs_blob = theirs_info.split(" ")[1]
+
+  # Try to find commits that contain these blobs - this is tricky from conflict state
+  # For now, let's use HEAD and MERGE_HEAD
+  ours_commit = `git rev-parse HEAD`.strip
+  theirs_commit = `git rev-parse MERGE_HEAD 2>/dev/null`.strip
+
+  if theirs_commit.empty?
+    # If not in merge, try to get from reflog or other means
+    theirs_commit = `git log --oneline --all --grep="branch_theirs" | head -1 | cut -d' ' -f1`.strip
+  end
+
+  base_commit = get_merge_base(ours_commit, theirs_commit)
+
+  if ours_commit.empty? || theirs_commit.empty? || base_commit.empty?
+    puts "Error: Could not determine commit references for conflict"
+    exit 1
+  end
+
+  # Read edited content
+  ours_content = File.read(ours_path)
+  theirs_content = File.read(theirs_path)
+
+  # Create temporary commits with the edits
+  puts "Creating temporary commits with manual edits..."
+
+  temp_ours_commit, temp_ours_branch = create_temp_commit_with_edits(ours_commit, file, ours_content, "ours")
+  temp_theirs_commit, temp_theirs_branch = create_temp_commit_with_edits(theirs_commit, file, theirs_content, "theirs")
+
+  unless temp_ours_commit && temp_theirs_commit
+    puts "Failed to create temporary commits"
+    cleanup_temp_branch(temp_ours_branch) if temp_ours_branch
+    cleanup_temp_branch(temp_theirs_branch) if temp_theirs_branch
+    exit 1
+  end
+
+  begin
+    # Get the merge base
+    merge_base = get_merge_base(temp_ours_commit, temp_theirs_commit)
+
+    puts "Re-merging with git merge-tree simulation..."
+    puts "Base: #{merge_base[0..7]}"
+    puts "Ours (edited): #{temp_ours_commit[0..7]}"
+    puts "Theirs (edited): #{temp_theirs_commit[0..7]}"
+
+    # Simulate merge with the edited commits
+    result = simulate_merge_with_tree(merge_base, temp_ours_commit, temp_theirs_commit)
+
+    if result[:success]
+      if result[:merged_tree]
+        # Extract the merged file content
+        merged_content = `git show #{result[:merged_tree]}:#{file}`
+
+        if $?.success?
+          File.write(file, merged_content)
+          puts "Clean merge successful! Applied to #{file}"
+          puts "\nShowing diff and staging file..."
+          system "git diff #{file}"
+          system "git add #{file}"
+          puts "File staged successfully."
+        else
+          puts "Failed to extract merged content"
+        end
+      else
+        puts "Clean merge detected (no changes needed)"
+      end
+    else
+      puts "Re-merge failed with conflicts:"
+      puts result[:conflicts] if result[:conflicts]
+      puts result[:merge_output] if result[:merge_output]
+      puts "Original file unchanged."
+    end
+
+  ensure
+    # Cleanup temporary branches
+    cleanup_temp_branch(temp_ours_branch)
+    cleanup_temp_branch(temp_theirs_branch)
+  end
+end
+
+def simulate_merge_for_conflict_file(file)
+  # Get the commits involved in the conflict
+  # Use HEAD and MERGE_HEAD for the actual commits
+  ours_commit = `git rev-parse HEAD`.strip
+  theirs_commit = `git rev-parse MERGE_HEAD 2>/dev/null`.strip
+
+  if theirs_commit.empty?
+    puts "Error: Not currently in a merge state (MERGE_HEAD not found)"
+    return false
+  end
+
+  base_commit = get_merge_base(ours_commit, theirs_commit)
+
+  if ours_commit.empty? || theirs_commit.empty? || base_commit.empty?
+    puts "Error: Could not determine commit references for conflict in #{file}"
+    return false
+  end
+
+  puts "Merge simulation for '#{file}':"
+  puts "Base: #{base_commit[0..7]}"
+  puts "Ours: #{ours_commit[0..7]}"
+  puts "Theirs: #{theirs_commit[0..7]}"
+  puts
+
+  # Simulate the merge
+  result = simulate_merge_with_tree(base_commit, ours_commit, theirs_commit)
+
+  if result[:success]
+    puts "✅ This conflict should merge cleanly with proper 3-way merge!"
+    if result[:merged_tree]
+      puts "Merged tree: #{result[:merged_tree][0..7]}"
+
+      # Show what the clean merge would produce
+      merged_content = `git show #{result[:merged_tree]}:#{file}`
+      if $?.success?
+        puts "\nClean merged content preview:"
+        puts "─" * 50
+        puts merged_content
+        puts "─" * 50
+        puts "\nWould you like to apply this clean merge? (y/N)"
+        input = STDIN.gets
+        choice = input ? input.strip.downcase : 'n'
+
+        if choice == 'y' || choice == 'yes'
+          File.write(file, merged_content)
+          system "git add #{file}"
+          puts "Clean merge applied and staged!"
+          return true
+        end
+      end
+    end
+  else
+    puts "❌ Merge has genuine conflicts that need manual resolution:"
+    puts result[:conflicts] if result[:conflicts]
+    puts result[:merge_output] if result[:merge_output]
+  end
+
+  false
 end
 
 def main
   json_output = ARGV.delete('--json')
+  dry_run = ARGV.delete('--dry-run')
 
   if ARGV[0] == '--extract'
     file = ARGV[1]
@@ -91,11 +328,32 @@ def main
     return
   end
 
+  if ARGV[0] == '--simulate'
+    file = ARGV[1]
+    unless file
+      puts("USAGE: #{File.basename __FILE__} --simulate FILE")
+      exit 0
+    end
+
+    if check_merge_conflict(file)
+      puts "Error: '#{file}' is not in a merge conflict state."
+      exit 1
+    end
+
+    simulate_merge_for_conflict_file(file)
+    return
+  end
+
   file = ARGV.shift
-  unless file
-    puts("USAGE: #{File.basename __FILE__} FILE")
+  if !file || file == '--help' || file == '-h'
+    puts("USAGE: #{File.basename __FILE__} [--dry-run] [--json] FILE")
     puts("       #{File.basename __FILE__} --extract [--json] FILE")
     puts("       #{File.basename __FILE__} --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
+    puts("       #{File.basename __FILE__} --simulate FILE")
+    puts("")
+    puts("Enhanced 3-way merge conflict resolution using git merge-tree")
+    puts("--simulate: Check if conflict can be resolved cleanly")
+    puts("--dry-run: Show what would happen without making changes")
     exit 0
   end
 
@@ -103,6 +361,15 @@ def main
     puts "Error: '#{file}' is not in a merge conflict state."
     exit 1
   end
+
+  # First try simulation to see if it's a false conflict
+  puts "Checking if this is a false conflict that should merge cleanly..."
+  if simulate_merge_for_conflict_file(file)
+    return # Successfully resolved with clean merge
+  end
+
+  # Fall back to manual resolution workflow
+  puts "\nProceeding with manual 3-way merge resolution..."
 
   editor = get_git_editor
 
@@ -121,10 +388,11 @@ Choose a diff to view for '#{file}':"
       puts "1. Theirs vs. Merged"
       puts "2. Ours vs. Merged"
       puts "3. Theirs vs. Ours"
-      puts "4. Re-merge with edited files"
+      puts "4. Re-merge with edited files (using merge-tree simulation)"
       puts "q. Quit"
       print "> "
-      choice = STDIN.gets.strip
+      input = STDIN.gets
+      choice = input ? input.strip : 'q'
 
       case choice
       when '1'
@@ -134,21 +402,7 @@ Choose a diff to view for '#{file}':"
       when '3'
         system "#{editor} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file_ours}"
       when '4'
-        puts "Re-merging with edited files..."
-        merge_result = `git merge-file #{file_ours} #{file_base} #{file_theirs} 2>&1`
-
-        if $?.success?
-          system "cp #{file_ours} #{file}"
-          puts "Clean merge successful! Applied to #{file}"
-          puts "\nShowing diff and staging file..."
-          system "git diff #{file}"
-          system "git add #{file}"
-          puts "File staged successfully."
-        else
-          puts "Re-merge failed with conflicts. Original file unchanged."
-          puts "Merge output: #{merge_result}" unless merge_result.strip.empty?
-          puts "To see the conflicted version, check the temporary file: #{file_ours}"
-        end
+        remerge_from_files(file, file_ours, file_base, file_theirs)
       when 'q'
         break
       else
