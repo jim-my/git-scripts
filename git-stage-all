@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# git-all: Stage all changes in the working directory
+# git-stage-all: Stage all changes in the working directory
 #
 # This script stages all unstaged changes including new, modified, and deleted
 # files using 'git add -A'. It provides a quick way to stage everything with
@@ -13,12 +13,15 @@
 
 set -euo pipefail
 
+SCRIPT_NAME="$(basename "$0")"
+SUBCOMMAND="${SCRIPT_NAME#git-}"
+
 usage() {
-    cat << 'EOF'
-git-all - Stage all changes in the working directory
+    cat << EOF
+${SCRIPT_NAME} - Stage all changes in the working directory
 
 USAGE:
-    git all [--help] [--force]
+    git ${SUBCOMMAND} [--help] [--force]
 
 DESCRIPTION:
     Stages all changes in the working directory using 'git add -A'.
@@ -32,10 +35,10 @@ OPTIONS:
 
 EXAMPLES:
     # Stage all changes (with confirmation)
-    git all
+    git ${SUBCOMMAND}
 
     # Stage all changes without confirmation
-    git all --force
+    git ${SUBCOMMAND} --force
 
 SAFETY:
     - Requires you to be in a git repository
