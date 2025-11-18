@@ -30,7 +30,7 @@ git wtf                          # Enhanced status
 | **git-experiment** | Safe code experimentation sandbox | Isolated development with automatic cleanup |
 | **git-search-in-each-commit** | Search through commit history | Fills gap in git's "contains pattern" search |
 | **git-when-reached-branch** | Determine when commit reached branch | Comprehensive merge detection with confidence levels |
-| **git-remove-redundant-commits** | Clean branch history automatically | Remove duplicates and rebase cleanly |
+| **git-dedupe** | Clean branch history automatically | Remove duplicates and rebase cleanly |
 | **git-split-amended-commit** | Split accidentally merged commits | Fixes accidental `git commit --amend` mistakes |
 | **git-wtf** | Enhanced repository status | Branch relationships and sync status |
 
@@ -38,7 +38,7 @@ git wtf                          # Enhanced status
 
 ### 🔍 **Duplicate & History Management**
 - **git-check-dup** - Find commits with identical content between branches
-- **git-remove-redundant-commits** - Remove duplicate commits and rebase cleanly
+- **git-dedupe** - Remove duplicate commits and rebase cleanly
 - **git-remove-from-history** - Completely remove files/directories from history
 - **git-search-in-each-commit** - Search for patterns across commit history
 - **git-when-reached-branch** - Track when commits reached specific branches
@@ -144,7 +144,7 @@ cp git-scripts/git-wtf ~/.local/bin/
 git check-dup origin/main
 
 # Remove duplicates and clean history
-git remove-redundant-commits --apply
+git dedupe --apply
 ```
 
 ### Safe Experimentation
@@ -186,7 +186,7 @@ git ls-by-date --sort
 
 Some scripts work better together:
 
-- **git-check-dup** + **git-remove-redundant-commits** - Complete duplicate management
+- **git-check-dup** + **git-dedupe** - Complete duplicate management
 - **git-experiment** + **git-stash-smart** - Enhanced experimental workflow
 - **git-up/reup** + **git-wtf** - Comprehensive sync and status workflow
 
@@ -283,7 +283,7 @@ Some scripts work better together:
 - git-promote
 - git-rank-contributers
 - git-remove-from-history
-- git-remove-redundant-commits
+- git-dedupe
 - git-reup
 - git-search-in-each-commit
 - git-show-merges

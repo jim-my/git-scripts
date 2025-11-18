@@ -38,7 +38,7 @@ class GitScriptsMCP:
             "git_redo": self._handle_git_redo,
             "git_recommit": self._handle_git_recommit,
             "git_check_dup": self._handle_git_check_dup,
-            "git_remove_redundant_commits": self._handle_git_remove_redundant_commits,
+            "git_dedupe": self._handle_git_dedupe,
             "git_branch_diff": self._handle_git_branch_diff,
             "git_find_file": self._handle_git_find_file,
             "git_diff_patch": self._handle_git_diff_patch,
@@ -153,7 +153,7 @@ class GitScriptsMCP:
             ),
 
             Tool(
-                name="git_remove_redundant_commits",
+                name="git_dedupe",
                 description=(
                     """🧹 Automatically remove redundant/duplicate commits and cleanly rebase
                     branch. Uses two-phase approach:
@@ -490,12 +490,12 @@ class GitScriptsMCP:
             isError=True,
         )
 
-    async def _handle_git_remove_redundant_commits(
+    async def _handle_git_dedupe(
         self,
         args: Dict[str, Any],
     ) -> CallToolResult:
-        """Execute git-remove-redundant-commits script."""
-        script_path = self._get_script_path("git-remove-redundant-commits")
+        """Execute git-dedupe script."""
+        script_path = self._get_script_path("git-dedupe")
         cmd = [str(script_path)]
 
         onto_branch = args.get("onto_branch", "origin/main")
@@ -513,7 +513,7 @@ class GitScriptsMCP:
                 content=[TextContent(
                     type="text",
                     text=(
-                        f"✅ Git remove redundant commits - {mode}:\n\n{result.stdout.decode()}"
+                        f"✅ Git dedupe - {mode}:\n\n{result.stdout.decode()}"
                     ),
                 )],
             )
@@ -521,7 +521,7 @@ class GitScriptsMCP:
             content=[TextContent(
                 type="text",
                 text=(
-                    f"❌ Git remove redundant commits failed:\n{result.stderr.decode()}"
+                    f"❌ Git dedupe failed:\n{result.stderr.decode()}"
                 ),
             )],
             isError=True,

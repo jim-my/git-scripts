@@ -13,7 +13,7 @@ This MCP server goes beyond basic Git operations to provide **advanced safety wo
 
 ### 🔍 Duplicate Detection & Cleanup
 - **`git_check_dup`** - Find duplicate commits by content (not hash)
-- **`git_remove_redundant_commits`** - Automatically clean redundant commits with backups
+- **`git_dedupe`** - Automatically clean redundant commits with backups
 
 ### 📊 Branch Analysis Tools
 - **`git_branch_diff`** - Visual branch comparison
@@ -74,10 +74,10 @@ Use git_recommit with confirm=true
 Use git_check_dup with remote_branch="origin/main"
 
 # Clean up redundant commits (dry-run first)
-Use git_remove_redundant_commits with onto_branch="origin/main"
+Use git_dedupe with onto_branch="origin/main"
 
 # Apply the cleanup if dry-run looks good
-Use git_remove_redundant_commits with onto_branch="origin/main", apply=true
+Use git_dedupe with onto_branch="origin/main", apply=true
 ```
 
 ### Cross-Branch Analysis
@@ -146,7 +146,7 @@ Find duplicate commits between branches based on content (patch-id).
 - After cherry-picking to verify which commits were applied
 - Branch cleanup preparation
 
-### git_remove_redundant_commits
+### git_dedupe
 Automatically remove redundant commits and cleanly rebase branch.
 
 **Parameters:**

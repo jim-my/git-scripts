@@ -35,6 +35,7 @@ test:
 install:
     @echo "Installing scripts..."
     make install
+    cd mcp-server && pip install -e .
 
 # Uninstall scripts using the Makefile
 uninstall:

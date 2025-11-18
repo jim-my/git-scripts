@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# git-remove-redundant-commits - Clean Branch History and Rebase
+# git-dedupe - Clean Branch History and Rebase
 # =============================================================================
 #
 # PURPOSE:
@@ -33,12 +33,12 @@ set -euo pipefail
 #   - Shows exactly what redundant commits will be removed
 #
 # USAGE:
-#   git-remove-redundant-commits [--onto <branch>] [--apply]
+#   git-dedupe [--onto <branch>] [--apply]
 #
 # EXAMPLES:
-#   git-remove-redundant-commits                    # Dry-run against origin/main
-#   git-remove-redundant-commits --apply            # Actually clean and rebase
-#   git-remove-redundant-commits --onto upstream/main --apply  # Rebase onto different branch
+#   git-dedupe                    # Dry-run against origin/main
+#   git-dedupe --apply            # Actually clean and rebase
+#   git-dedupe --onto upstream/main --apply  # Rebase onto different branch
 #
 # WORKFLOW:
 #   1. Run without --apply first to see what will happen
@@ -67,7 +67,7 @@ onto_branch="origin/main"
 apply=false
 
 usage() {
-    echo "Usage: git-remove-redundant-commits [--onto <branch>] [--apply]"
+    echo "Usage: git-dedupe [--onto <branch>] [--apply]"
     echo
     echo "Remove redundant commits and rebase branch cleanly."
     echo
@@ -77,9 +77,9 @@ usage() {
     echo "                   (default is dry-run mode)"
     echo
     echo "Examples:"
-    echo "  git-remove-redundant-commits                    # Show what would happen"
-    echo "  git-remove-redundant-commits --apply            # Actually clean and rebase"
-    echo "  git-remove-redundant-commits --onto upstream/main --apply"
+    echo "  git-dedupe                    # Show what would happen"
+    echo "  git-dedupe --apply            # Actually clean and rebase"
+    echo "  git-dedupe --onto upstream/main --apply"
     echo
     echo "Safety: Always creates backup branch before making changes."
     exit 1
@@ -167,7 +167,7 @@ if [[ "$apply" == false ]]; then
     echo -e "${YELLOW}[DRY-RUN] No changes applied. Backup branch: $backup_branch${NC}"
     echo -e "${YELLOW}[DRY-RUN] To apply cleanup and rebase onto ${onto_branch}:${NC}"
     echo
-    echo "    git remove-duplicates-and-rebase --onto ${onto_branch} --apply"
+    echo "    git dedupe --onto ${onto_branch} --apply"
     echo
     exit 0
 fi

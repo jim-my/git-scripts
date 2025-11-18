@@ -65,7 +65,7 @@ SAFETY:
     - Shows preview before making changes
 
 SEE ALSO:
-    git-remove-duplicates-and-rebase, git-check-dup
+    git-dedupe, git-check-dup
 EOF
 }
 
@@ -144,7 +144,7 @@ if [[ -z "$ORIGINAL_COMMIT" ]]; then
 
         # Strategy 3: Check commits from remote tracking branch differences
         if git remote >/dev/null 2>&1; then
-            TRACKING_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "")
+            TRACKING_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")
             if [[ -n "$TRACKING_BRANCH" ]]; then
                 echo "Checking differences from tracking branch $TRACKING_BRANCH..."
                 while IFS= read -r remote_commit; do
@@ -156,7 +156,7 @@ if [[ -z "$ORIGINAL_COMMIT" ]]; then
         fi
 
         # Remove duplicates and show options
-        UNIQUE_COMMITS=($(printf "%s\n" "${POTENTIAL_COMMITS[@]}" | sort -u))
+        mapfile -t UNIQUE_COMMITS < <(printf "%s\n" "${POTENTIAL_COMMITS[@]}" | sort -u)
 
         if [[ ${#UNIQUE_COMMITS[@]} -eq 0 ]]; then
             echo "No potential original commits found from branch differences."
