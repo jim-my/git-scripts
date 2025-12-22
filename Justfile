@@ -31,22 +31,24 @@ test:
         echo "No test.sh found. Create tests for your scripts!"; \
     fi
 
-# Install scripts using the Makefile
+# Install scripts using install.sh
 install:
     @echo "Installing scripts..."
-    make install
+    ./install.sh --force
     cd mcp-server && pip install -e .
 
-# Uninstall scripts using the Makefile
+# Uninstall scripts using uninstall.sh
 uninstall:
     @echo "Uninstalling scripts..."
-    make uninstall
+    ./uninstall.sh
 
 # Clean up temporary files
 clean:
     @echo "Cleaning up..."
-    make clean
     @rm -f .pre-commit-config.yaml.bak
+    @find . -name "*.pyc" -delete
+    @find . -name "__pycache__" -type d -delete
+    @echo "Cleanup complete."
 
 # Check all scripts for common issues
 check:

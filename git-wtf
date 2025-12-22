@@ -1,12 +1,90 @@
-#!/usr/bin/env ruby
+#!/usr/bin/env python3
+"""
+git-wtf - Display the state of your repository in a readable format
 
-require 'awesome_print'
+Python port of the original Ruby version by William Morgan.
+Original: https://github.com/DanielVartanov/willgit/blob/07e9bfd03e8bf512481bdeb77acec2d8c84b4595/bin/git-wtf
 
-VERBOSE = ARGV.delete('-v') || ARGV.delete('--verbose')
+This Python version:
+- Zero dependencies (standard library only)
+- Maintains same functionality and interface as original
+- Uses JSON for config instead of YAML
+"""
 
-# https://gitorious.org/willgit/mainline/raw/a84bba3726a19bc78086852d54bb0219ea1bb6f9:bin/git-wtf
-HELP = <<EOS
-git-wtf displays the state of your repository in a readable, easy-to-scan
+import subprocess
+import sys
+import os
+import json
+import re
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple, Any
+
+
+# Exit codes
+class ExitCode:
+    """Standard exit codes for the application."""
+    SUCCESS = 0
+    ERROR = 1
+    GIT_ERROR = 128
+
+
+# ANSI color codes
+class Color:
+    """ANSI color codes for terminal output."""
+    RED = '\033[31m'
+    GREEN = '\033[32m'
+    YELLOW = '\033[33m'
+    CYAN = '\033[36m'
+    PURPLE = '\033[35m'
+    GREY = '\033[1;30m'
+    RESET = '\033[0m'
+
+
+# Git command timeout (seconds)
+GIT_TIMEOUT = 30
+
+# Config file name
+CONFIG_FN = ".git-wtfrc.json"
+
+# Default configuration
+DEFAULT_CONFIG = {
+    "integration-branches": ["heads/master", "heads/next", "heads/edge"],
+    "ignore": [],
+    "max_commits": 5
+}
+
+
+class GitError(Exception):
+    """Base exception for git-related errors."""
+    pass
+
+
+class GitRepositoryError(GitError):
+    """Raised when not in a valid git repository."""
+    pass
+
+
+class GitCommandError(GitError):
+    """Raised when a git command fails."""
+    pass
+
+
+class GitTimeoutError(GitError):
+    """Raised when a git command times out."""
+    pass
+
+
+# Global configuration (set during execution)
+config: Dict[str, Any] = {}
+use_color: bool = False
+long: bool = False
+short: bool = False
+all_remotes: bool = False
+all_commits: bool = False
+show_filename: bool = False
+
+
+HELP = """git-wtf displays the state of your repository in a readable, easy-to-scan
 format. It's useful for getting a summary of how a branch relates to a remote
 server, and for wrangling many topic branches.
 
@@ -18,10 +96,9 @@ git-wtf can show you:
 
 git-wtf is best used before a git push, or between a git fetch and a git
 merge. Be sure to set color.ui to auto or yes for maximum viewing pleasure.
-EOS
+"""
 
-KEY = <<EOS
-KEY:
+KEY = """KEY:
 () branch only exists locally
 {} branch only exists on a remote repo
 [] branch exists locally and remotely
@@ -33,10 +110,9 @@ x merge occurs both locally and remotely
 (It's possible for merges to occur remotely and not locally, of course, but
 that's a less common case and git-wtf currently doesn't display anything
 special for it.)
-EOS
+"""
 
-USAGE = <<EOS
-Usage: git wtf [branch+] [options]
+USAGE = """Usage: git wtf [branch+] [options]
 
 If [branch] is not specified, git-wtf will use the current branch. The possible
 [options] are:
@@ -54,21 +130,20 @@ If [branch] is not specified, git-wtf will use the current branch. The possible
 git-wtf uses some heuristics to determine which branches are integration
 branches, and which are feature branches. (Specifically, it assumes the
 integration branches are named "master", "next" and "edge".) If it guesses
-incorrectly, you will have to create a .git-wtfrc file.
+incorrectly, you will have to create a .git-wtfrc.json file.
 
 To start building a configuration file, run "git-wtf --dump-config >
-.git-wtfrc" and edit it. The config file is a YAML file that specifies the
+.git-wtfrc.json" and edit it. The config file is a JSON file that specifies the
 integration branches, any branches to ignore, and the max number of commits to
-display when --all-commits isn't used.  git-wtf will look for a .git-wtfrc file
-starting in the current directory, and recursively up to the root.
+display when --all-commits isn't used. git-wtf will look for a .git-wtfrc.json
+file starting in the current directory, and recursively up to the root.
 
-IMPORTANT NOTE: all local branches referenced in .git-wtfrc must be prefixed
+IMPORTANT NOTE: all local branches referenced in .git-wtfrc.json must be prefixed
 with heads/, e.g. "heads/master". Remote branches must be of the form
 remotes/<remote>/<branch>.
-EOS
+"""
 
-COPYRIGHT = <<EOS
-git-wtf Copyright 2008--2009 William Morgan <wmorgan at the masanjin dot nets>.
+COPYRIGHT = """git-wtf Copyright 2008--2009 William Morgan <wmorgan at the masanjin dot nets>.
 This program is free software: you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the Free
 Software Foundation, either version 3 of the License, or (at your option)
@@ -80,309 +155,797 @@ FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
 more details.
 
 You can find the GNU General Public License at: http://www.gnu.org/licenses/
-EOS
+"""
 
-require 'yaml'
-CONFIG_FN = ".git-wtfrc"
 
-class Numeric; def pluralize s; "#{to_s} #{s}" + (self != 1 ? "s" : "") end end
+def validate_ref_name(name: str) -> str:
+    """
+    Validate and sanitize a git reference name.
 
-if ARGV.delete("--help") || ARGV.delete("-h")
-  puts USAGE
-  exit
-end
+    Args:
+        name: The reference name to validate
 
-## poor man's trollop
-$long = ARGV.delete("--long") || ARGV.delete("-l")
-$short = ARGV.delete("--short") || ARGV.delete("-s")
-$all = ARGV.delete("--all") || ARGV.delete("-a")
-$all_commits = ARGV.delete("--all-commits") || ARGV.delete("-A")
-$dump_config = ARGV.delete("--dump-config")
-$key = ARGV.delete("--key") || ARGV.delete("-k")
-$show_relations = ARGV.delete("--relations") || ARGV.delete("-r")
-$show_filename = ARGV.delete("--filename") || ARGV.delete("-f")
-ARGV.each { |a| abort "Error: unknown argument #{a}." if a =~ /^--/ }
+    Returns:
+        The validated name
 
-## search up the path for a file
-def find_file fn
-  while true
-    return fn if File.exist? fn
-    fn2 = File.join("..", fn)
-    return nil if File.expand_path(fn2) == File.expand_path(fn)
-    fn = fn2
-  end
-end
+    Raises:
+        ValueError: If the name contains invalid characters
+    """
+    # Git ref names can contain alphanumeric, dash, underscore, slash, and dot
+    if not re.match(r'^[a-zA-Z0-9/_\-\.]+$', name):
+        raise ValueError(f"Invalid reference name: {name!r}")
+    return name
 
-want_color = `git config color.wtf`
-want_color = `git config color.ui` if want_color.empty?
-$color = case want_color.chomp
-  when "true"; true
-  when "auto"; $stdout.tty?
-end
 
-def red s; $color ? "\033[31m#{s}\033[0m" : s end
-def green s; $color ? "\033[32m#{s}\033[0m" : s end
-def yellow s; $color ? "\033[33m#{s}\033[0m" : s end
-def cyan s; $color ? "\033[36m#{s}\033[0m" : s end
-def grey s; $color ? "\033[1;30m#{s}\033[0m" : s end
-def purple s; $color ? "\033[35m#{s}\033[0m" : s end
+def pluralize(n: int, s: str) -> str:
+    """
+    Format number with singular/plural form.
 
-## the set of commits in 'to' that aren't in 'from'.
-## if empty, 'to' has been merged into 'from'.
-def commits_between from, to
-  if $long
-    #`git log --pretty=format:"- %s [#{yellow "%h"}] (#{purple "%ae"}; %ar)" #{from}..#{to}`
-    cmd = %Q(git log --pretty=format:"- <%an> %s [#{yellow "%h"}] (#{purple "%ae"}; %ar)" #{from}..#{to})
-    puts cmd if VERBOSE
-    `#{cmd}`
-  else
-    # `git log --pretty=format:"- %s [#{yellow "%h"}]" #{from}..#{to}`
-    cmd = %Q(git log --pretty=format:"- <%an> %s [#{yellow "%h"}]" #{from}..#{to})
-    puts cmd if VERBOSE
-    `#{cmd}`
-  end.split(/[\r\n]+/)
-end
+    Args:
+        n: The count
+        s: The singular form of the word
 
-def show_commits commits, prefix="    "
-  if commits.empty?
-    puts "#{prefix} none"
-  else
-    max = $all_commits ? commits.size : $config["max_commits"]
-    max -= 1 if max == commits.size - 1 # never show "and 1 more"
-    commits[0 ... max].each { |c|
-        printf "#{prefix}%s\n", c
-        commit = c.match(/\[([^\]]+)\]/)[1].gsub(/\e\[[\d;]*m/, '')
-        if $show_filename
-            files = `git show --pretty=format: --name-only #{commit}`.split("\n")
-            printf "%s\n", files.map {|it| prefix + "\t * " + it}.join("\n") if files.length > 0
-        end
+    Returns:
+        Formatted string like "1 commit" or "2 commits"
+
+    Example:
+        >>> pluralize(1, 'commit')
+        '1 commit'
+        >>> pluralize(2, 'commit')
+        '2 commits'
+    """
+    return f"{n} {s}" + ("s" if n != 1 else "")
+
+
+def find_file(fn: str) -> Optional[str]:
+    """
+    Search up the directory tree for a file.
+
+    Args:
+        fn: Filename to search for
+
+    Returns:
+        Absolute path to the file if found, None otherwise
+
+    Example:
+        >>> find_file('.git-wtfrc.json')
+        '/home/user/project/.git-wtfrc.json'
+    """
+    current = Path.cwd()
+    while True:
+        candidate = current / fn
+        if candidate.exists():
+            return str(candidate)
+        parent = current.parent
+        if parent == current:  # reached root
+            return None
+        current = parent
+
+
+def git_config(key: str) -> str:
+    """
+    Get a git configuration value.
+
+    Args:
+        key: Git config key (e.g., 'color.ui')
+
+    Returns:
+        The config value, or empty string if not set
+
+    Example:
+        >>> git_config('color.ui')
+        'auto'
+    """
+    try:
+        result = subprocess.run(
+            ["git", "config", key],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GIT_TIMEOUT
+        )
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return ""
+    except Exception:
+        return ""
+
+
+def git_command(cmd: List[str], check: bool = False, timeout: int = GIT_TIMEOUT) -> str:
+    """
+    Run a git command and return its output.
+
+    Args:
+        cmd: Command and arguments as a list
+        check: If True, raise GitCommandError on failure
+        timeout: Timeout in seconds
+
+    Returns:
+        Command stdout stripped of whitespace
+
+    Raises:
+        GitRepositoryError: If not in a git repository
+        GitCommandError: If command fails and check=True
+        GitTimeoutError: If command times out
+
+    Example:
+        >>> git_command(['git', 'branch', '--show-current'])
+        'main'
+    """
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+            timeout=timeout
+        )
+
+        if check and result.returncode != 0:
+            if result.returncode == ExitCode.GIT_ERROR:
+                if "not a git repository" in result.stderr.lower():
+                    raise GitRepositoryError("Not in a git repository")
+            raise GitCommandError(f"Git command failed: {result.stderr}")
+
+        return result.stdout.strip()
+
+    except subprocess.TimeoutExpired:
+        raise GitTimeoutError(f"Git command timed out: {' '.join(cmd)}")
+    except FileNotFoundError:
+        raise GitCommandError("Git is not installed or not in PATH")
+
+
+def colorize(text: str, color: str) -> str:
+    """
+    Apply ANSI color to text if color output is enabled.
+
+    Args:
+        text: Text to colorize
+        color: Color code from Color class
+
+    Returns:
+        Colored text if use_color is True, otherwise plain text
+    """
+    if use_color:
+        return f"{color}{text}{Color.RESET}"
+    return text
+
+
+def red(s: str) -> str:
+    """Apply red color to string."""
+    return colorize(s, Color.RED)
+
+
+def green(s: str) -> str:
+    """Apply green color to string."""
+    return colorize(s, Color.GREEN)
+
+
+def yellow(s: str) -> str:
+    """Apply yellow color to string."""
+    return colorize(s, Color.YELLOW)
+
+
+def cyan(s: str) -> str:
+    """Apply cyan color to string."""
+    return colorize(s, Color.CYAN)
+
+
+def grey(s: str) -> str:
+    """Apply grey color to string."""
+    return colorize(s, Color.GREY)
+
+
+def purple(s: str) -> str:
+    """Apply purple color to string."""
+    return colorize(s, Color.PURPLE)
+
+
+def get_commits_between(from_ref: str, to_ref: str) -> List[str]:
+    """
+    Get commits in 'to_ref' that aren't in 'from_ref'.
+
+    Args:
+        from_ref: Starting reference (validated)
+        to_ref: Ending reference (validated)
+
+    Returns:
+        List of formatted commit lines
+
+    Raises:
+        ValueError: If ref names are invalid
+    """
+    # Validate inputs
+    validate_ref_name(from_ref)
+    validate_ref_name(to_ref)
+
+    if long:
+        format_str = f"- <%an> %s [{yellow('%h')}] ({purple('%ae')}; %ar)"
+    else:
+        format_str = f"- <%an> %s [{yellow('%h')}]"
+
+    cmd = ["git", "log", f"--pretty=format:{format_str}", f"{from_ref}..{to_ref}"]
+    output = git_command(cmd)
+    return output.split('\n') if output else []
+
+
+def show_commits(commits: List[str], prefix: str = "    ") -> None:
+    """
+    Display a list of commits with optional file changes.
+
+    Args:
+        commits: List of formatted commit strings
+        prefix: Prefix for each line (for indentation)
+    """
+    if not commits:
+        print(f"{prefix} none")
+        return
+
+    max_commits = len(commits) if all_commits else config["max_commits"]
+    if max_commits == len(commits) - 1:  # never show "and 1 more"
+        max_commits -= 1
+
+    for c in commits[:max_commits]:
+        print(f"{prefix}{c}")
+        if show_filename:
+            # Extract commit hash from the commit string
+            match = re.search(r'\[([^\]]+)\]', c)
+            if match:
+                commit_hash = re.sub(r'\x1b\[[\d;]*m', '', match.group(1))  # strip ANSI codes
+                try:
+                    validate_ref_name(commit_hash)
+                    files_output = git_command(["git", "show", "--pretty=format:", "--name-only", commit_hash])
+                    files = [f for f in files_output.split('\n') if f]
+                    if files:
+                        for f in files:
+                            print(f"{prefix}\t * {f}")
+                except ValueError:
+                    pass  # Skip invalid hashes
+
+    if len(commits) > max_commits:
+        remaining = len(commits) - max_commits
+        print(yellow(f"{prefix}... and {pluralize(remaining, 'commit')} more (use -A to see all)."))
+
+
+def format_ahead_behind(ahead: List[str], behind: List[str]) -> str:
+    """
+    Format ahead/behind status as a human-readable string.
+
+    Args:
+        ahead: List of commits ahead
+        behind: List of commits behind
+
+    Returns:
+        Formatted string like "2 commits ahead; 1 commit behind"
+    """
+    parts = []
+    if ahead:
+        parts.append(pluralize(len(ahead), 'commit') + ' ahead')
+    if behind:
+        parts.append(pluralize(len(behind), 'commit') + ' behind')
+    return "; ".join(parts)
+
+
+def print_widget(merged_in: bool, remote_only: bool = False,
+                local_only: bool = False, local_only_merge: bool = False) -> None:
+    """
+    Print a merge status indicator widget.
+
+    Args:
+        merged_in: Whether the branch is merged
+        remote_only: Branch exists only on remote
+        local_only: Branch exists only locally
+        local_only_merge: Merged only locally
+
+    Prints:
+        A colored bracket indicator like [x], (), or {}
+    """
+    if remote_only:
+        left, right = '{', '}'
+    elif local_only:
+        left, right = '(', ')'
+    else:
+        left, right = '[', ']'
+
+    if merged_in and local_only_merge:
+        middle = green('~')
+    elif merged_in:
+        middle = green('x')
+    else:
+        middle = ' '
+
+    print(left + middle + right, end=' ')
+
+
+def show_branch_status(branch_info: Dict[str, Any]) -> None:
+    """
+    Display status for a single branch.
+
+    Args:
+        branch_info: Dictionary containing branch information
+            Keys: local_branch, remote_branch, remote_url, name
+    """
+    have_both = branch_info.get('local_branch') and branch_info.get('remote_branch')
+
+    pushc, pullc, oosync = [], [], False
+    if have_both:
+        pushc = get_commits_between(branch_info['remote_branch'], branch_info['local_branch'])
+        pullc = get_commits_between(branch_info['local_branch'], branch_info['remote_branch'])
+        oosync = bool(pushc) and bool(pullc)
+
+    # Show local branch status
+    if branch_info.get('local_branch'):
+        print("Local branch: " + green(branch_info['local_branch'].replace('heads/', '', 1)))
+
+        if have_both:
+            if not pushc:
+                print_widget(True)
+                print("in sync with remote")
+            else:
+                action = "push after rebase / merge" if oosync else "push"
+                print_widget(False)
+                print(f"NOT in sync with remote (you should {action})")
+                if not short:
+                    show_commits(pushc)
+
+    # Show remote branch status
+    if branch_info.get('remote_branch'):
+        print(f"\nRemote branch: {cyan(branch_info['remote_branch'])} ({branch_info.get('remote_url', '')})")
+
+        if have_both:
+            if not pullc:
+                print_widget(True)
+                print("in sync with local")
+            else:
+                action = "merge" if not pushc else "rebase / merge"
+                print_widget(False)
+                print(f"NOT in sync with local (you should {action})")
+                if not short:
+                    show_commits(pullc)
+
+    if oosync:
+        print(f"\n{red('WARNING')}: local and remote branches have diverged. A merge will occur unless you rebase.")
+
+
+def show_feature_branches(branch_info: Dict[str, Any],
+                          feature_branches: List[Tuple[str, Dict[str, Any]]]) -> None:
+    """
+    Show status of feature branches relative to an integration branch.
+
+    Args:
+        branch_info: The integration branch information
+        feature_branches: List of (name, branch_info) tuples for feature branches
+    """
+    if not feature_branches:
+        return
+
+    print("\nFeature branches:")
+    for name, br in feature_branches:
+        if br.get('local_branch') in config["ignore"] or br.get('remote_branch') in config["ignore"]:
+            continue
+        if br.get('ignore'):
+            continue
+
+        local_only = not br.get('remote_branch')
+        remote_only = not br.get('local_branch')
+
+        if local_only:
+            display_name = purple(br['name'])
+        elif remote_only:
+            display_name = cyan(br['name'])
+        else:
+            display_name = green(br['name'])
+
+        head = br['remote_branch'] if remote_only else br['local_branch']
+
+        remote_ahead = get_commits_between(branch_info['remote_branch'], head) if branch_info.get('remote_branch') else []
+        local_ahead = get_commits_between(branch_info['local_branch'], head) if branch_info.get('local_branch') else []
+
+        if not local_ahead and not remote_ahead:
+            print_widget(True, remote_only, local_only)
+            local_only_str = "(local-only) " if local_only else ""
+            print(f"{display_name} {local_only_str}is merged in")
+        elif not local_ahead:
+            print_widget(True, remote_only, local_only, True)
+            print(f"{display_name} merged in (only locally)")
+        else:
+            behind = get_commits_between(head, br.get('local_branch') or br['remote_branch'])
+            ahead = remote_ahead if remote_only else local_ahead
+            print_widget(False, remote_only, local_only)
+            local_only_str = "(local-only) " if local_only else ""
+            print(f"{display_name} {local_only_str}is NOT merged in ({format_ahead_behind(ahead, behind)})")
+            if not short:
+                show_commits(ahead)
+
+
+def show_integration_branches(branch_info: Dict[str, Any],
+                              integration_branches: List[Tuple[str, Dict[str, Any]]]) -> None:
+    """
+    Show status of integration branches relative to a feature branch.
+
+    Args:
+        branch_info: The feature branch information
+        integration_branches: List of (name, branch_info) tuples for integration branches
+    """
+    if not integration_branches:
+        return
+
+    print("\nIntegration branches:")
+    for v, br in sorted(integration_branches, key=lambda x: x[0]):
+        if br.get('local_branch') in config["ignore"] or br.get('remote_branch') in config["ignore"]:
+            continue
+        if br.get('ignore'):
+            continue
+
+        local_only = not br.get('remote_branch')
+        remote_only = not br.get('local_branch')
+        display_name = cyan(br['name']) if remote_only else green(br['name'])
+
+        ahead = get_commits_between(v, branch_info.get('local_branch') or branch_info['remote_branch'])
+        if not ahead:
+            print_widget(True, local_only)
+            print(f"merged into {display_name}")
+        else:
+            print_widget(False, local_only)
+            print(f"NOT merged into {display_name} ({pluralize(len(ahead), 'commit')} ahead)")
+            if not short:
+                show_commits(ahead)
+
+
+def show_branch_relations(branch_info: Dict[str, Any], all_branches: Dict[str, Dict[str, Any]]) -> None:
+    """
+    Show how a branch relates to integration/feature branches.
+
+    Args:
+        branch_info: Information about the current branch
+        all_branches: Dictionary of all branches in the repository
+    """
+    integration_branches_set = set(config["integration-branches"])
+
+    ibs = []
+    fbs = []
+    for name, br in all_branches.items():
+        if br.get('local_branch') in integration_branches_set or br.get('remote_branch') in integration_branches_set:
+            ibs.append((name, br))
+        else:
+            fbs.append((name, br))
+
+    if branch_info.get('local_branch') in integration_branches_set:
+        show_feature_branches(branch_info, fbs)
+    else:
+        show_integration_branches(branch_info, ibs)
+
+
+def load_config() -> Dict[str, Any]:
+    """
+    Load configuration from .git-wtfrc.json file.
+
+    Returns:
+        Configuration dictionary with defaults
+
+    Searches up directory tree for config file and merges with defaults.
+    """
+    config = DEFAULT_CONFIG.copy()
+    config_file = find_file(CONFIG_FN)
+    if config_file:
+        try:
+            with open(config_file, 'r') as f:
+                loaded_config = json.load(f)
+                # Support old nomenclature
+                if "versions" in loaded_config and "integration-branches" not in loaded_config:
+                    loaded_config["integration-branches"] = loaded_config["versions"]
+                config.update(loaded_config)
+        except (json.JSONDecodeError, IOError):
+            pass  # Use defaults if config file is invalid
+    return config
+
+
+def get_remotes() -> Dict[str, str]:
+    """
+    Get all git remotes and their URLs.
+
+    Returns:
+        Dictionary mapping remote name to URL
+    """
+    remotes = {}
+    remote_config = git_command(["git", "config", "--get-regexp", r"^remote\..*\.url"])
+    for line in remote_config.split('\n'):
+        if line:
+            match = re.match(r'^remote\.(.+?)\.url (.+)$', line)
+            if match:
+                remotes[match.group(1)] = match.group(2)
+    return remotes
+
+
+def get_tracked_branches(remotes: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Get all tracked branches from git config.
+
+    Args:
+        remotes: Dictionary of remote names to URLs
+
+    Returns:
+        Dictionary mapping branch name to tracking information
+    """
+    branches: Dict[str, Dict[str, Any]] = {}
+    branch_config = git_command(["git", "config", "--get-regexp", "^branch."])
+
+    for line in branch_config.split('\n'):
+        if not line:
+            continue
+
+        match = re.match(r'branch\.(.*?)\.remote (.+)', line)
+        if match:
+            name, remote = match.group(1), match.group(2)
+            if name not in branches:
+                branches[name] = {}
+            branches[name]['remote'] = remote
+            branches[name]['remote_url'] = remotes.get(remote)
+
+        match = re.match(r'branch\.(.*?)\.merge (?:(?:refs/)?heads/)?(.+)', line)
+        if match:
+            name, remote_branch = match.group(1), match.group(2)
+            if name not in branches:
+                branches[name] = {}
+            branches[name]['remote_mergepoint'] = remote_branch
+
+    return branches
+
+
+def get_all_branches(remotes: Dict[str, str], tracked_branches: Dict[str, Dict[str, Any]],
+                     all_remotes_flag: bool) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, bool]]:
+    """
+    Get all local and remote branches.
+
+    Args:
+        remotes: Dictionary of remote names
+        tracked_branches: Dictionary of tracking branch info
+        all_remotes_flag: Whether to include all remotes or just origin
+
+    Returns:
+        Tuple of (branches dict, remote_branches set)
+    """
+    branches = tracked_branches.copy()
+    remote_branches: Dict[str, bool] = {}
+
+    show_ref = git_command(["git", "show-ref"])
+    for line in show_ref.split('\n'):
+        if not line:
+            continue
+
+        parts = line.split(' refs/', 1)
+        if len(parts) != 2:
+            continue
+        sha1, ref = parts
+
+        # Local branch
+        match = re.match(r'^heads/(.+)$', ref)
+        if match:
+            name = match.group(1)
+            if name == "HEAD":
+                continue
+            if name not in branches:
+                branches[name] = {}
+            branches[name]['name'] = name
+            branches[name]['local_branch'] = ref
+
+        # Remote branch
+        match = re.match(r'^remotes/(.+?)/(.+)$', ref)
+        if match:
+            remote, name = match.group(1), match.group(2)
+            remote_branches[f"{remote}/{name}"] = True
+            if name == "HEAD":
+                continue
+
+            ignore = not (all_remotes_flag or remote == "origin")
+
+            branch = name
+            if name in branches and branches[name].get('remote') == remote:
+                pass  # Use existing name
+            else:
+                name = f"{remote}/{branch}"
+
+            if name not in branches:
+                branches[name] = {}
+            branches[name]['name'] = name
+            branches[name]['remote'] = remote
+            branches[name]['remote_branch'] = f"{remote}/{branch}"
+            branches[name]['remote_url'] = remotes.get(remote)
+            branches[name]['ignore'] = ignore
+
+    return branches, remote_branches
+
+
+def assemble_remote_refs(branches: Dict[str, Dict[str, Any]],
+                         remote_branches: Dict[str, bool]) -> None:
+    """
+    Link local branches to their remote tracking branches.
+
+    Args:
+        branches: Dictionary of branch information (modified in place)
+        remote_branches: Set of remote branch names
+    """
+    for k, b in branches.items():
+        if b.get('remote') and b.get('remote_mergepoint'):
+            if b['remote'] == ".":
+                b['remote_branch'] = b['remote_mergepoint']
+            else:
+                t = f"{b['remote']}/{b['remote_mergepoint']}"
+                if t in remote_branches:  # only if it's still alive
+                    b['remote_branch'] = t
+
+
+def get_current_branch() -> Optional[str]:
+    """
+    Get the current branch name.
+
+    Returns:
+        Current branch name, or None if in detached HEAD state
+    """
+    try:
+        current_ref = git_command(["git", "symbolic-ref", "HEAD"], check=False)
+        if current_ref:
+            return current_ref.replace('refs/heads/', '', 1)
+        return None
+    except GitCommandError:
+        return None
+
+
+def check_working_directory_status() -> Tuple[bool, bool]:
+    """
+    Check if working directory has modifications.
+
+    Returns:
+        Tuple of (has_modified_files, has_staged_files)
+    """
+    modified = git_command(["git", "ls-files", "-m"]) != ""
+    uncommitted = git_command(["git", "diff-index", "--cached", "HEAD"]) != ""
+    return modified, uncommitted
+
+
+def parse_args() -> Dict[str, Any]:
+    """
+    Parse command-line arguments.
+
+    Returns:
+        Dictionary of parsed arguments
+    """
+    args = {
+        'verbose': '-v' in sys.argv or '--verbose' in sys.argv,
+        'long': '--long' in sys.argv or '-l' in sys.argv,
+        'short': '--short' in sys.argv or '-s' in sys.argv,
+        'all_remotes': '--all' in sys.argv or '-a' in sys.argv,
+        'all_commits': '--all-commits' in sys.argv or '-A' in sys.argv,
+        'dump_config': '--dump-config' in sys.argv,
+        'show_key': '--key' in sys.argv or '-k' in sys.argv,
+        'show_relations': '--relations' in sys.argv or '-r' in sys.argv,
+        'show_filename': '--filename' in sys.argv or '-f' in sys.argv,
     }
-    puts yellow("#{prefix}... and #{commits.size - max} more (use -A to see all).") if commits.size > max
 
-    # show all files changed
-    # puts `git list-files HEAD~#{max}`
-  end
-end
+    # Remove processed arguments
+    for flag in ['-v', '--verbose', '--long', '-l', '--short', '-s',
+                 '--all', '-a', '--all-commits', '-A', '--dump-config',
+                 '--key', '-k', '--relations', '-r', '--filename', '-f']:
+        while flag in sys.argv:
+            sys.argv.remove(flag)
 
-def ahead_behind_string ahead, behind
-  [ahead.empty? ? nil : "#{ahead.size.pluralize 'commit'} ahead",
-   behind.empty? ? nil : "#{behind.size.pluralize 'commit'} behind"].
-   compact.join("; ")
-end
+    # Check for unknown arguments
+    remaining_args = [a for a in sys.argv[1:] if a.startswith("--")]
+    if remaining_args:
+        print(f"Error: unknown argument {remaining_args[0]}.", file=sys.stderr)
+        sys.exit(ExitCode.ERROR)
 
-def widget merged_in, remote_only=false, local_only=false, local_only_merge=false
-  left, right = case
-    when remote_only; %w({ })
-    when local_only; %w{( )}
-    else %w([ ])
-  end
-  middle = case
-    when merged_in && local_only_merge; green("~")
-    when merged_in; green("x")
-    else " "
-  end
-  print left, middle, right
-end
+    # Get target branches
+    args['targets'] = [arg.replace('heads/', '', 1) for arg in sys.argv[1:]]
 
-def show b
-  have_both = b[:local_branch] && b[:remote_branch]
+    return args
 
-  pushc, pullc, oosync = if have_both
-    [x = commits_between(b[:remote_branch], b[:local_branch]),
-     y = commits_between(b[:local_branch], b[:remote_branch]),
-     !x.empty? && !y.empty?]
-  end
 
-  if b[:local_branch]
-    puts "Local branch: " + green(b[:local_branch].sub(/^heads\//, ""))
+def main() -> int:
+    """
+    Main entry point for git-wtf.
 
-    if have_both
-      if pushc.empty?
-        puts "#{widget true} in sync with remote"
-      else
-        action = oosync ? "push after rebase / merge" : "push"
-        puts "#{widget false} NOT in sync with remote (you should #{action})"
-        show_commits pushc unless $short
-      end
-    end
-  end
+    Returns:
+        Exit code
+    """
+    global config, use_color, long, short, all_remotes, all_commits, show_filename
 
-  if b[:remote_branch]
-    puts "\nRemote branch: #{cyan b[:remote_branch]} (#{b[:remote_url]})"
+    # Check for help
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(USAGE)
+        return ExitCode.SUCCESS
 
-    if have_both
-      if pullc.empty?
-        puts "#{widget true} in sync with local"
-      else
-        action = pushc.empty? ? "merge" : "rebase / merge"
-        puts "#{widget false} NOT in sync with local (you should #{action})"
-        show_commits pullc unless $short
-      end
-    end
-  end
+    # Parse arguments
+    args = parse_args()
 
-  puts "\n#{red "WARNING"}: local and remote branches have diverged. A merge will occur unless you rebase." if oosync
-end
+    # Set global flags
+    long = args['long']
+    short = args['short']
+    all_remotes = args['all_remotes']
+    all_commits = args['all_commits']
+    show_filename = args['show_filename']
 
-def show_relations b, all_branches
-  ibs, fbs = all_branches.partition { |name, br| $config["integration-branches"].include?(br[:local_branch]) || $config["integration-branches"].include?(br[:remote_branch]) }
-  if $config["integration-branches"].include? b[:local_branch]
-    puts "\nFeature branches:" unless fbs.empty?
-    fbs.each do |name, br|
-      next if $config["ignore"].member?(br[:local_branch]) || $config["ignore"].member?(br[:remote_branch])
-      next if br[:ignore]
-      local_only = br[:remote_branch].nil?
-      remote_only = br[:local_branch].nil?
-      name = if local_only
-        purple br[:name]
-      elsif remote_only
-        cyan br[:name]
-      else
-        green br[:name]
-      end
+    # Load configuration
+    config = load_config()
 
-      ## for remote_only branches, we'll compute wrt the remote branch head. otherwise, we'll
-      ## use the local branch head.
-      head = remote_only ? br[:remote_branch] : br[:local_branch]
+    # Dump config if requested
+    if args['dump_config']:
+        print(json.dumps(config, indent=2))
+        return ExitCode.SUCCESS
 
-      remote_ahead = b[:remote_branch] ? commits_between(b[:remote_branch], head) : []
-      local_ahead = b[:local_branch] ? commits_between(b[:local_branch], head) : []
+    # Determine color support
+    want_color = git_config("color.wtf")
+    if not want_color:
+        want_color = git_config("color.ui")
 
-      if local_ahead.empty? && remote_ahead.empty?
-        puts "#{widget true, remote_only, local_only} #{name} #{local_only ? "(local-only) " : ""}is merged in"
-      elsif local_ahead.empty?
-        puts "#{widget true, remote_only, local_only, true} #{name} merged in (only locally)"
-      else
-        behind = commits_between head, (br[:local_branch] || br[:remote_branch])
-        ahead = remote_only ? remote_ahead : local_ahead
-        puts "#{widget false, remote_only, local_only} #{name} #{local_only ? "(local-only) " : ""}is NOT merged in (#{ahead_behind_string ahead, behind})"
-        show_commits ahead unless $short
-      end
-    end
-  else
-    puts "\nIntegration branches:" unless ibs.empty? # unlikely
-    ibs.sort_by { |v, br| v }.each do |v, br|
-      next if $config["ignore"].member?(br[:local_branch]) || $config["ignore"].member?(br[:remote_branch])
-      next if br[:ignore]
-      local_only = br[:remote_branch].nil?
-      remote_only = br[:local_branch].nil?
-      name = remote_only ? cyan(br[:name]) : green(br[:name])
+    use_color = want_color == "true" or (want_color == "auto" and sys.stdout.isatty())
 
-      ahead = commits_between v, (b[:local_branch] || b[:remote_branch])
-      if ahead.empty?
-        puts "#{widget true, local_only} merged into #{name}"
-      else
-        #behind = commits_between b[:local_branch], v
-        puts "#{widget false, local_only} NOT merged into #{name} (#{ahead.size.pluralize 'commit'} ahead)"
-        show_commits ahead unless $short
-      end
-    end
-  end
-end
+    # Get repository information
+    try:
+        remotes = get_remotes()
+        tracked_branches = get_tracked_branches(remotes)
+        all_branches, remote_branches = get_all_branches(remotes, tracked_branches, all_remotes)
+        assemble_remote_refs(all_branches, remote_branches)
+    except GitError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return ExitCode.GIT_ERROR
 
-#### EXECUTION STARTS HERE ####
+    # Determine target branches
+    if not args['targets']:
+        current = get_current_branch()
+        if current is None:
+            print("Error: Not on a branch (detached HEAD state)", file=sys.stderr)
+            return ExitCode.ERROR
+        targets = [current]
+        show_dirty = True
+    else:
+        targets = args['targets']
+        show_dirty = False
 
-## find config file and load it
-$config = { "integration-branches" => %w(heads/master heads/next heads/edge), "ignore" => [], "max_commits" => 5 }.merge begin
-  fn = find_file CONFIG_FN
-  if fn && (h = YAML::load_file(fn)) # yaml turns empty files into false
-    h["integration-branches"] ||= h["versions"] # support old nomenclature
-    h
-  else
-    {}
-  end
-end
+    # Validate targets
+    target_branches = []
+    for t in targets:
+        if t not in all_branches:
+            print(f"Error: can't find branch {t!r}.", file=sys.stderr)
+            return ExitCode.ERROR
+        target_branches.append(all_branches[t])
 
-if $dump_config
-  puts $config.to_yaml
-  exit
-end
+    # Show status for each target
+    for branch_info in target_branches:
+        show_branch_status(branch_info)
+        if args['show_relations'] or not branch_info.get('remote_branch'):
+            show_branch_relations(branch_info, all_branches)
 
-## first, index registered remotes
-remotes = `git config --get-regexp ^remote\.\*\.url`.split(/[\r\n]+/).inject({}) do |hash, l|
-  l =~ /^remote\.(.+?)\.url (.+)$/ or next hash
-  hash[$1] ||= $2
-  hash
-end
+    # Check working directory status
+    if show_dirty:
+        modified, uncommitted = check_working_directory_status()
 
-## next, index followed branches
-branches = `git config --get-regexp ^branch\.`.split(/[\r\n]+/).inject({}) do |hash, l|
-  case l
-  when /branch\.(.*?)\.remote (.+)/
-    name, remote = $1, $2
+        if args['show_key']:
+            print()
+            print(KEY)
 
-    hash[name] ||= {}
-    hash[name].merge! :remote => remote, :remote_url => remotes[remote]
-  when /branch\.(.*?)\.merge ((refs\/)?heads\/)?(.+)/
-    name, remote_branch = $1, $4
-    hash[name] ||= {}
-    hash[name].merge! :remote_mergepoint => remote_branch
-  end
-  hash
-end
+        if modified or uncommitted:
+            print()
+        if modified:
+            print(f"{red('NOTE')}: working directory contains modified files.")
+        if uncommitted:
+            print(f"{red('NOTE')}: staging area contains staged but uncommitted files.")
+        if modified or uncommitted:
+            print()
 
-## finally, index all branches
-remote_branches = {}
-`git show-ref`.split(/[\r\n]+/).each do |l|
-  sha1, ref = l.chomp.split " refs/"
+    return ExitCode.SUCCESS
 
-  if ref =~ /^heads\/(.+)$/ # local branch
-    name = $1
-    next if name == "HEAD"
-    branches[name] ||= {}
-    branches[name].merge! :name => name, :local_branch => ref
-  elsif ref =~ /^remotes\/(.+?)\/(.+)$/ # remote branch
-    remote, name = $1, $2
-    remote_branches["#{remote}/#{name}"] = true
-    next if name == "HEAD"
-    ignore = !($all || remote == "origin")
 
-    branch = name
-    if branches[name] && branches[name][:remote] == remote
-      # nothing
-    else
-      name = "#{remote}/#{branch}"
-    end
-
-    branches[name] ||= {}
-    branches[name].merge! :name => name, :remote => remote, :remote_branch => "#{remote}/#{branch}", :remote_url => remotes[remote], :ignore => ignore
-  end
-end
-
-## assemble remotes
-branches.each do |k, b|
-  next unless b[:remote] && b[:remote_mergepoint]
-  b[:remote_branch] = if b[:remote] == "."
-    b[:remote_mergepoint]
-  else
-    t = "#{b[:remote]}/#{b[:remote_mergepoint]}"
-    remote_branches[t] && t # only if it's still alive
-  end
-end
-
-show_dirty = ARGV.empty?
-targets = if ARGV.empty?
-  [`git symbolic-ref HEAD`.chomp.sub(/^refs\/heads\//, "")]
-else
-  ARGV.map { |x| x.sub(/^heads\//, "") }
-end.map { |t| branches[t] or abort "Error: can't find branch #{t.inspect}." }
-
-targets.each do |t|
-  show t
-  show_relations t, branches if $show_relations || t[:remote_branch].nil?
-end
-
-modified = show_dirty && `git ls-files -m` != ""
-uncommitted = show_dirty &&  `git diff-index --cached HEAD` != ""
-
-if $key
-  puts
-  puts KEY
-end
-
-puts if modified || uncommitted
-puts "#{red "NOTE"}: working directory contains modified files." if modified
-puts "#{red "NOTE"}: staging area contains staged but uncommitted files." if uncommitted
-puts
-
-# the end!
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nInterrupted", file=sys.stderr)
+        sys.exit(ExitCode.ERROR)
+    except GitError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(ExitCode.GIT_ERROR)
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        sys.exit(ExitCode.ERROR)
