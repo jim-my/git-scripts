@@ -6,6 +6,7 @@ require 'tmpdir'
 require 'json'
 require 'fileutils'
 require 'open3'
+require 'shellwords'
 
 def get_git_editor
   editor = `git config core.editor`.strip
@@ -28,21 +29,22 @@ def get_merge_base(ours, theirs)
 end
 
 def has_write_tree_support?
-  `git merge-tree --help 2>/dev/null | grep -q -- '--write-tree'`
-  $?.success?
+  output, status = Open3.capture2("git", "merge-tree", "--help")
+  status.success? && output.include?("--write-tree")
 end
 
 def simulate_merge_with_tree(base, ours, theirs)
   if has_write_tree_support?
     # Use modern --write-tree mode - but need correct syntax
-    merged_tree = `git merge-tree --write-tree #{ours} #{theirs} 2>&1`.strip
-    success = $?.success?
+    merged_tree, status = Open3.capture2e("git", "merge-tree", "--write-tree", ours, theirs)
+    merged_tree = merged_tree.strip
+    success = status.success?
 
     if success
       # Check if there are differences vs both sides
-      system "git diff --quiet #{ours} #{merged_tree} 2>/dev/null"
+      system "git", "diff", "--quiet", ours, merged_tree
       has_ours_changes = !$?.success?
-      system "git diff --quiet #{theirs} #{merged_tree} 2>/dev/null"
+      system "git", "diff", "--quiet", theirs, merged_tree
       has_theirs_changes = !$?.success?
 
       {
@@ -222,8 +224,8 @@ def simulate_merge_for_conflict_file(file)
       puts "Merged tree: #{result[:merged_tree][0..7]}"
 
       # Show what the clean merge would produce
-      merged_content = `git show #{result[:merged_tree]}:#{file}`
-      if $?.success?
+      merged_content, show_status = Open3.capture2("git", "show", "#{result[:merged_tree]}:#{file}")
+      if show_status.success?
         puts "\nClean merged content preview:"
         puts "─" * 50
         puts merged_content
@@ -350,11 +352,11 @@ Choose a diff to view for '#{file}':"
 
       case choice
       when '1'
-        system "#{editor} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file}"
+        system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_theirs, file)
       when '2'
-        system "#{editor} -c 'set diffopt+=iwhite' -d #{file_ours} #{file}"
+        system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_ours, file)
       when '3'
-        system "#{editor} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file_ours}"
+        system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_theirs, file_ours)
       when '4'
         remerge_from_files(file, file_ours, file_base, file_theirs, dry_run, json_output)
       when 'q'
