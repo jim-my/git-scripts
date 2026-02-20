@@ -295,12 +295,17 @@ def main
   if !file || file == '--help' || file == '-h'
     puts("USAGE: #{File.basename __FILE__} [--dry-run] [--json] FILE")
     puts("       #{File.basename __FILE__} --extract [--json] FILE")
-    puts("       #{File.basename __FILE__} --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
+    puts("       #{File.basename __FILE__} [--json] [--dry-run] --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
     puts("       #{File.basename __FILE__} --simulate FILE")
     puts("")
     puts("Enhanced 3-way merge conflict resolution")
+    puts("--extract: Write stage 2/1/3 (ours/base/theirs) to temp files")
+    puts("--remerge: Re-merge edited ours/base/theirs files and stage on success")
     puts("--simulate: Check if conflict can be resolved cleanly")
-    puts("--dry-run: Show what would happen without making changes")
+    puts("--dry-run: Show what would happen without writing/staging")
+    puts("--json: Emit machine-readable JSON output")
+    puts("")
+    puts("JSON statuses for --remerge: applied, dry_run_clean, still_conflicted, error")
     exit 0
   end
 

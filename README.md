@@ -170,6 +170,28 @@ git up                 # pull with merge
 git reup              # pull with rebase
 ```
 
+### Conflict Resolution with `git-diff-123`
+```bash
+# 1) In an active merge conflict, extract stage files
+git diff-123 --extract --json path/to/conflicted_file
+# -> returns temp file paths for ours/base/theirs
+
+# 2) Edit ours/theirs temp files manually (keep base as reference)
+# 3) Re-merge edited files
+git diff-123 --remerge path/to/conflicted_file OURS_PATH BASE_PATH THEIRS_PATH
+```
+
+JSON mode is available for tool integrations:
+```bash
+git diff-123 --json --remerge path/to/conflicted_file OURS_PATH BASE_PATH THEIRS_PATH
+```
+
+`--json --remerge` statuses:
+- `applied` - merged content was applied and staged
+- `dry_run_clean` - clean merge possible, but no file changes were written
+- `still_conflicted` - edited inputs still conflict; includes `merged_preview`
+- `error` - command failed (missing files, stage failure, or merge-file error)
+
 ### Historical Analysis
 ```bash
 # Search through commit history
