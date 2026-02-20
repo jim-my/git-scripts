@@ -13,7 +13,9 @@ def get_git_editor
 end
 
 def check_merge_conflict(file)
-  `git ls-files -u #{file}`.strip.empty?
+  output, status = Open3.capture2("git", "ls-files", "-u", "--", file)
+  return true unless status.success?
+  output.strip.empty?
 end
 
 def get_merge_base(ours, theirs)
@@ -91,9 +93,19 @@ def extract_conflict_files(file, json_output = false)
   file_ours = File.join(tmpdir, 'ours')
   file_base = File.join(tmpdir, 'base')
 
-  system "git show :3:#{file} > #{file_theirs}"
-  system "git show :2:#{file} > #{file_ours}"
-  system "git show :1:#{file} > #{file_base}"
+  {
+    "3" => file_theirs,
+    "2" => file_ours,
+    "1" => file_base
+  }.each do |stage, output_path|
+    content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
+    unless status.success?
+      puts JSON.generate({error: "Failed to extract stage #{stage} for '#{file}'"}) if json_output
+      puts "Error: Failed to extract stage #{stage} for '#{file}'" unless json_output
+      exit 1
+    end
+    File.write(output_path, content)
+  end
 
   if json_output
     puts JSON.generate({
@@ -124,7 +136,7 @@ def remerge_from_files(file, ours_path, base_path, theirs_path, dry_run = false)
     end
 
     File.write(file, merged_content)
-    system "git add #{file}"
+    system "git", "add", "--", file
     unless $?.success?
       puts "Error: Failed to stage #{file}"
       return false
@@ -194,7 +206,7 @@ def simulate_merge_for_conflict_file(file)
 
         if choice == 'y' || choice == 'yes'
           File.write(file, merged_content)
-          system "git add #{file}"
+          system "git", "add", "--", file
           puts "Clean merge applied and staged!"
           return true
         end
@@ -283,9 +295,18 @@ def main
     file_ours = File.join(tmpdir, 'ours')
     file_base = File.join(tmpdir, 'base')
 
-    system "git show :3:#{file} > #{file_theirs}"
-    system "git show :2:#{file} > #{file_ours}"
-    system "git show :1:#{file} > #{file_base}"
+    {
+      "3" => file_theirs,
+      "2" => file_ours,
+      "1" => file_base
+    }.each do |stage, output_path|
+      content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
+      unless status.success?
+        puts "Error: Failed to extract stage #{stage} for '#{file}'"
+        break
+      end
+      File.write(output_path, content)
+    end
 
     loop do
       puts "

@@ -20,7 +20,7 @@ def run(cmd, cwd, check=True):
     return result
 
 
-def init_conflicted_repo(tmp_path: Path) -> Path:
+def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
 
@@ -28,16 +28,18 @@ def init_conflicted_repo(tmp_path: Path) -> Path:
     run(["git", "config", "user.name", "Test User"], cwd=repo)
     run(["git", "config", "user.email", "test@example.com"], cwd=repo)
 
-    (repo / "f.txt").write_text("line1\nline2\n", encoding="utf-8")
-    run(["git", "add", "f.txt"], cwd=repo)
+    target = repo / file_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("line1\nline2\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
     run(["git", "commit", "-qm", "base"], cwd=repo)
 
     run(["git", "checkout", "-qb", "feature"], cwd=repo)
-    (repo / "f.txt").write_text("line1\nours\n", encoding="utf-8")
+    target.write_text("line1\nours\n", encoding="utf-8")
     run(["git", "commit", "-am", "ours"], cwd=repo)
 
     run(["git", "checkout", "-q", "main"], cwd=repo)
-    (repo / "f.txt").write_text("line1\ntheirs\n", encoding="utf-8")
+    target.write_text("line1\ntheirs\n", encoding="utf-8")
     run(["git", "commit", "-am", "theirs"], cwd=repo)
 
     merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
@@ -113,3 +115,20 @@ def test_remerge_keeps_file_unchanged_when_manual_edits_still_conflict(tmp_path)
     assert remerge.returncode == 1
     assert "Re-merge still has conflicts" in remerge.stdout
     assert (repo / "f.txt").read_text(encoding="utf-8") == before_content
+
+
+def test_extract_handles_conflicted_file_paths_with_spaces(tmp_path):
+    file_path = "dir with spaces/f name.txt"
+    repo = init_conflicted_repo(tmp_path, file_path=file_path)
+
+    extract = run([str(SCRIPT_PATH), "--extract", "--json", file_path], cwd=repo, check=False)
+    assert extract.returncode == 0, extract.stdout + extract.stderr
+
+    files = json.loads(extract.stdout)
+    expected_ours = run(["git", "show", f":2:{file_path}"], cwd=repo).stdout
+    expected_base = run(["git", "show", f":1:{file_path}"], cwd=repo).stdout
+    expected_theirs = run(["git", "show", f":3:{file_path}"], cwd=repo).stdout
+
+    assert Path(files["ours"]).read_text(encoding="utf-8") == expected_ours
+    assert Path(files["base"]).read_text(encoding="utf-8") == expected_base
+    assert Path(files["theirs"]).read_text(encoding="utf-8") == expected_theirs
