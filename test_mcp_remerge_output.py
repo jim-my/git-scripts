@@ -93,3 +93,35 @@ def test_remerge_handler_reports_stdout_when_stderr_empty(monkeypatch):
 
     assert result.isError is True
     assert "Re-merge still has conflicts" in result.content[0].text
+
+
+def test_remerge_handler_parses_json_still_conflicted_payload(monkeypatch):
+    server = GitScriptsMCP()
+    captured_cmd = {}
+
+    async def fake_run_command(cmd, input_text=None):
+        captured_cmd["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=1,
+            stdout=b'{"status":"still_conflicted","message":"still conflicted"}\n',
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(server, "_get_script_path", lambda _: Path("/tmp/git-diff-123"))
+
+    result = asyncio.run(
+        server._handle_git_remerge_from_files(
+            {
+                "file": "f.txt",
+                "ours_path": "/tmp/ours",
+                "base_path": "/tmp/base",
+                "theirs_path": "/tmp/theirs",
+            }
+        )
+    )
+
+    assert "--json" in captured_cmd["cmd"]
+    assert result.isError is True
+    assert "still conflicted" in result.content[0].text

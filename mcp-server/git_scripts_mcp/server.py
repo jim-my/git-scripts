@@ -7,6 +7,7 @@ Each tool corresponds to a battle-tested Git script with enhanced safety feature
 """
 
 import asyncio
+import json
 import logging
 import subprocess
 import sys
@@ -723,21 +724,42 @@ class GitScriptsMCP:
             )
 
         script_path = self._get_script_path("git-diff-123")
-        cmd = [str(script_path), "--remerge", file, ours_path, base_path, theirs_path]
+        cmd = [str(script_path), "--json", "--remerge", file, ours_path, base_path, theirs_path]
 
         result = await self._run_command(cmd)
+        raw_stdout = result.stdout.decode().strip()
+        parsed = None
+        if raw_stdout:
+            try:
+                parsed = json.loads(raw_stdout)
+            except json.JSONDecodeError:
+                parsed = None
 
         if result.returncode == 0:
+            if parsed and isinstance(parsed, dict):
+                message = parsed.get("message", raw_stdout)
+            else:
+                message = raw_stdout
             return CallToolResult(
                 content=[TextContent(
                     type="text",
-                    text=f"🔧 Re-merge completed successfully:\n\n{result.stdout.decode()}",
+                    text=f"🔧 Re-merge completed successfully:\n\n{message}",
                 )],
+            )
+
+        if parsed and isinstance(parsed, dict):
+            message = parsed.get("message", raw_stdout or "Re-merge failed")
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"❌ Git remerge from files failed:\n{message}\n",
+                )],
+                isError=True,
             )
 
         error_output = result.stderr.decode().strip()
         if not error_output:
-            error_output = result.stdout.decode().strip()
+            error_output = raw_stdout
 
         return CallToolResult(
             content=[TextContent(

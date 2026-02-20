@@ -132,3 +132,35 @@ def test_extract_handles_conflicted_file_paths_with_spaces(tmp_path):
     assert Path(files["ours"]).read_text(encoding="utf-8") == expected_ours
     assert Path(files["base"]).read_text(encoding="utf-8") == expected_base
     assert Path(files["theirs"]).read_text(encoding="utf-8") == expected_theirs
+
+
+def test_remerge_json_reports_still_conflicted_status(tmp_path):
+    repo = init_conflicted_repo(tmp_path)
+
+    extract = run([str(SCRIPT_PATH), "--extract", "--json", "f.txt"], cwd=repo)
+    files = json.loads(extract.stdout)
+
+    ours_path = Path(files["ours"])
+    base_path = Path(files["base"])
+    theirs_path = Path(files["theirs"])
+
+    ours_path.write_text("line1\nmanual ours\n", encoding="utf-8")
+    theirs_path.write_text("line1\nmanual theirs\n", encoding="utf-8")
+
+    remerge = run(
+        [
+            str(SCRIPT_PATH),
+            "--json",
+            "--remerge",
+            "f.txt",
+            str(ours_path),
+            str(base_path),
+            str(theirs_path),
+        ],
+        cwd=repo,
+        check=False,
+    )
+    assert remerge.returncode == 1
+
+    payload = json.loads(remerge.stdout)
+    assert payload["status"] == "still_conflicted"

@@ -119,9 +119,13 @@ def extract_conflict_files(file, json_output = false)
   end
 end
 
-def remerge_from_files(file, ours_path, base_path, theirs_path, dry_run = false)
+def remerge_from_files(file, ours_path, base_path, theirs_path, dry_run = false, json_output = false)
   unless File.exist?(ours_path) && File.exist?(base_path) && File.exist?(theirs_path)
-    puts "Error: One or more temp files not found"
+    if json_output
+      puts JSON.generate({ status: "error", message: "One or more temp files not found" })
+    else
+      puts "Error: One or more temp files not found"
+    end
     return false
   end
 
@@ -131,33 +135,57 @@ def remerge_from_files(file, ours_path, base_path, theirs_path, dry_run = false)
 
   if status.exitstatus == 0
     if dry_run
-      puts "Dry run: clean re-merge available for #{file} (not applied)."
+      if json_output
+        puts JSON.generate({ status: "dry_run_clean", message: "Clean re-merge available for #{file} (not applied)." })
+      else
+        puts "Dry run: clean re-merge available for #{file} (not applied)."
+      end
       return true
     end
 
     File.write(file, merged_content)
     system "git", "add", "--", file
     unless $?.success?
-      puts "Error: Failed to stage #{file}"
+      if json_output
+        puts JSON.generate({ status: "error", message: "Failed to stage #{file}" })
+      else
+        puts "Error: Failed to stage #{file}"
+      end
       return false
     end
 
-    puts "Clean re-merge successful! Applied and staged #{file}."
+    if json_output
+      puts JSON.generate({ status: "applied", message: "Clean re-merge successful! Applied and staged #{file}." })
+    else
+      puts "Clean re-merge successful! Applied and staged #{file}."
+    end
     return true
   end
 
   if status.exitstatus == 1
-    puts "Re-merge still has conflicts after manual edits for #{file}."
-    puts "Update your edited ours/theirs files and try again."
-    puts "\nMerged preview with conflict markers:"
-    puts "-" * 50
-    puts merged_content
-    puts "-" * 50
+    if json_output
+      puts JSON.generate({
+        status: "still_conflicted",
+        message: "Re-merge still has conflicts after manual edits for #{file}.",
+        merged_preview: merged_content
+      })
+    else
+      puts "Re-merge still has conflicts after manual edits for #{file}."
+      puts "Update your edited ours/theirs files and try again."
+      puts "\nMerged preview with conflict markers:"
+      puts "-" * 50
+      puts merged_content
+      puts "-" * 50
+    end
     return false
   end
 
-  puts "Error: git merge-file failed for #{file}."
-  puts merge_stderr unless merge_stderr.strip.empty?
+  if json_output
+    puts JSON.generate({ status: "error", message: "git merge-file failed for #{file}", stderr: merge_stderr.strip })
+  else
+    puts "Error: git merge-file failed for #{file}."
+    puts merge_stderr unless merge_stderr.strip.empty?
+  end
   false
 end
 
@@ -241,7 +269,7 @@ def main
       puts("USAGE: #{File.basename __FILE__} --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
       exit 0
     end
-    success = remerge_from_files(file, ours_path, base_path, theirs_path, dry_run)
+    success = remerge_from_files(file, ours_path, base_path, theirs_path, dry_run, json_output)
     exit(success ? 0 : 1)
   end
 
@@ -328,7 +356,7 @@ Choose a diff to view for '#{file}':"
       when '3'
         system "#{editor} -c 'set diffopt+=iwhite' -d #{file_theirs} #{file_ours}"
       when '4'
-        remerge_from_files(file, file_ours, file_base, file_theirs, dry_run)
+        remerge_from_files(file, file_ours, file_base, file_theirs, dry_run, json_output)
       when 'q'
         break
       else
