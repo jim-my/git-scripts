@@ -735,10 +735,14 @@ class GitScriptsMCP:
                 )],
             )
 
+        error_output = result.stderr.decode().strip()
+        if not error_output:
+            error_output = result.stdout.decode().strip()
+
         return CallToolResult(
             content=[TextContent(
                 type="text",
-                text=f"❌ Git remerge from files failed:\n{result.stderr.decode()}",
+                text=f"❌ Git remerge from files failed:\n{error_output}\n",
             )],
             isError=True,
         )
