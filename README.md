@@ -172,29 +172,17 @@ git reup              # pull with rebase
 
 ### Conflict Resolution with `git-diff-123`
 ```bash
-# 1) In an active merge conflict, start guided mode (default in TTY)
-git diff-123 --extract --json path/to/conflicted_file
+# 1) In an active merge conflict, start guided mode
+git diff-123 path/to/conflicted_file
 # -> choose edit view, save changes, and the script auto-retries merge
 # -> if merge becomes clean, it applies and stages automatically
 ```
 
 JSON mode is available for tool integrations:
 ```bash
-# non-interactive JSON extract for tools
-git diff-123 --extract --json --no-guided path/to/conflicted_file
-
-# non-interactive JSON remerge
-git diff-123 --json --remerge path/to/conflicted_file OURS_PATH BASE_PATH THEIRS_PATH
-
 # audit a historical merge commit for potential conflict-resolution risk
-git diff-123 --commit <merge_commit> path/to/file --json
+git diff-123 --commit [<merge_commit>] path/to/file --json
 ```
-
-`--json --remerge` statuses:
-- `applied` - merged content was applied and staged
-- `dry_run_clean` - clean merge possible, but no file changes were written
-- `still_conflicted` - edited inputs still conflict; includes `merged_preview`
-- `error` - command failed (missing files, stage failure, or merge-file error)
 
 `--commit ... --json` fields:
 - `status` - `ok` or `error`

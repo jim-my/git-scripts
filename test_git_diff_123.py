@@ -55,7 +55,7 @@ def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
 def test_remerge_applies_clean_resolution_from_edited_files(tmp_path):
     repo = init_conflicted_repo(tmp_path)
 
-    extract = run([str(SCRIPT_PATH), "--extract", "--json", "f.txt"], cwd=repo)
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "f.txt"], cwd=repo)
     files = json.loads(extract.stdout)
 
     ours_path = Path(files["ours"])
@@ -70,7 +70,7 @@ def test_remerge_applies_clean_resolution_from_edited_files(tmp_path):
     remerge = run(
         [
             str(SCRIPT_PATH),
-            "--remerge",
+            "--tool-remerge",
             "f.txt",
             str(ours_path),
             str(base_path),
@@ -90,7 +90,7 @@ def test_remerge_applies_clean_resolution_from_edited_files(tmp_path):
 def test_remerge_keeps_file_unchanged_when_manual_edits_still_conflict(tmp_path):
     repo = init_conflicted_repo(tmp_path)
 
-    extract = run([str(SCRIPT_PATH), "--extract", "--json", "f.txt"], cwd=repo)
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "f.txt"], cwd=repo)
     files = json.loads(extract.stdout)
 
     ours_path = Path(files["ours"])
@@ -106,7 +106,7 @@ def test_remerge_keeps_file_unchanged_when_manual_edits_still_conflict(tmp_path)
     remerge = run(
         [
             str(SCRIPT_PATH),
-            "--remerge",
+            "--tool-remerge",
             "f.txt",
             str(ours_path),
             str(base_path),
@@ -125,7 +125,7 @@ def test_extract_handles_conflicted_file_paths_with_spaces(tmp_path):
     file_path = "dir with spaces/f name.txt"
     repo = init_conflicted_repo(tmp_path, file_path=file_path)
 
-    extract = run([str(SCRIPT_PATH), "--extract", "--json", file_path], cwd=repo, check=False)
+    extract = run([str(SCRIPT_PATH), "--tool-extract", file_path], cwd=repo, check=False)
     assert extract.returncode == 0, extract.stdout + extract.stderr
 
     files = json.loads(extract.stdout)
@@ -141,7 +141,7 @@ def test_extract_handles_conflicted_file_paths_with_spaces(tmp_path):
 def test_remerge_json_reports_still_conflicted_status(tmp_path):
     repo = init_conflicted_repo(tmp_path)
 
-    extract = run([str(SCRIPT_PATH), "--extract", "--json", "f.txt"], cwd=repo)
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "f.txt"], cwd=repo)
     files = json.loads(extract.stdout)
 
     ours_path = Path(files["ours"])
@@ -154,8 +154,7 @@ def test_remerge_json_reports_still_conflicted_status(tmp_path):
     remerge = run(
         [
             str(SCRIPT_PATH),
-            "--json",
-            "--remerge",
+            "--tool-remerge",
             "f.txt",
             str(ours_path),
             str(base_path),
@@ -170,13 +169,13 @@ def test_remerge_json_reports_still_conflicted_status(tmp_path):
     assert payload["status"] == "still_conflicted"
 
 
-def test_extract_json_uses_guided_prompt_in_tty_session(tmp_path):
+def test_default_file_mode_uses_guided_prompt_in_tty_session(tmp_path):
     repo = init_conflicted_repo(tmp_path)
     run(["git", "config", "core.editor", "true"], cwd=repo)
 
     master_fd, slave_fd = pty.openpty()
     proc = subprocess.Popen(
-        [str(SCRIPT_PATH), "--extract", "--json", "f.txt"],
+        [str(SCRIPT_PATH), "f.txt"],
         cwd=repo,
         stdin=slave_fd,
         stdout=slave_fd,
@@ -312,6 +311,20 @@ def test_commit_alias_runs_merge_audit(tmp_path):
 
     result = run(
         [str(SCRIPT_PATH), "--commit", commit, "f.txt", "--json"],
+        cwd=repo,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+
+
+def test_commit_without_hash_defaults_to_head(tmp_path):
+    repo = init_repo_with_clean_merge_commit(tmp_path)
+
+    result = run(
+        [str(SCRIPT_PATH), "--commit", "f.txt", "--json"],
         cwd=repo,
         check=False,
     )

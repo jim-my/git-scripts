@@ -455,31 +455,24 @@ end
 def main
   json_output = ARGV.delete('--json')
   dry_run = ARGV.delete('--dry-run')
-  no_guided = ARGV.delete('--no-guided')
 
-  if ARGV[0] == '--extract'
+  if ARGV[0] == '--tool-extract'
     file = ARGV[1]
     unless file
-      puts("USAGE: #{File.basename __FILE__} --extract [--json] FILE")
+      puts("USAGE: #{File.basename __FILE__} --tool-extract FILE")
       exit 0
     end
-    interactive_extract = !no_guided && STDIN.tty? && STDOUT.tty?
-    if interactive_extract
-      puts "Interactive mode: entering guided conflict resolution."
-      run_guided_resolution(file, dry_run)
-    else
-      extract_conflict_files(file, json_output)
-    end
+    extract_conflict_files(file, true)
     return
   end
 
-  if ARGV[0] == '--remerge'
+  if ARGV[0] == '--tool-remerge'
     file, ours_path, base_path, theirs_path = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
     unless file && ours_path && base_path && theirs_path
-      puts("USAGE: #{File.basename __FILE__} --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
+      puts("USAGE: #{File.basename __FILE__} --tool-remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
       exit 0
     end
-    success = remerge_from_files(file, ours_path, base_path, theirs_path, dry_run, json_output)
+    success = remerge_from_files(file, ours_path, base_path, theirs_path, dry_run, true)
     exit(success ? 0 : 1)
   end
 
@@ -500,10 +493,17 @@ def main
   end
 
   if ARGV[0] == '--commit'
-    commit = ARGV[1]
-    file = ARGV[2]
-    unless commit && file
-      puts("USAGE: #{File.basename __FILE__} --commit COMMIT FILE [--json]")
+    args = ARGV[1..]
+    commit = nil
+    file = nil
+    if args.length == 1
+      commit = "HEAD"
+      file = args[0]
+    elsif args.length == 2
+      commit = args[0]
+      file = args[1]
+    else
+      puts("USAGE: #{File.basename __FILE__} --commit [COMMIT] FILE [--json]")
       exit 0
     end
     success = audit_merge(file, commit, json_output)
@@ -512,22 +512,15 @@ def main
 
   file = ARGV.shift
   if !file || file == '--help' || file == '-h'
-    puts("USAGE: #{File.basename __FILE__} [--dry-run] [--json] [--no-guided] FILE")
-    puts("       #{File.basename __FILE__} --extract [--json] [--no-guided] FILE")
-    puts("       #{File.basename __FILE__} [--json] [--dry-run] --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
+    puts("USAGE: #{File.basename __FILE__} FILE")
+    puts("       #{File.basename __FILE__} --commit [COMMIT] FILE [--json]")
     puts("       #{File.basename __FILE__} --simulate FILE")
-    puts("       #{File.basename __FILE__} --commit COMMIT FILE [--json]")
     puts("")
     puts("Enhanced 3-way merge conflict resolution")
-    puts("--extract: Write stage 2/1/3 (ours/base/theirs) to temp files")
-    puts("--remerge: Re-merge edited ours/base/theirs files and stage on success")
+    puts("FILE: Guided conflict resolution for current working tree")
     puts("--simulate: Check if conflict can be resolved cleanly")
     puts("--commit: Audit past merge commit for a file")
-    puts("--dry-run: Show what would happen without writing/staging")
     puts("--json: Emit machine-readable JSON output")
-    puts("--no-guided: Disable interactive extract mode")
-    puts("")
-    puts("JSON statuses for --remerge: applied, dry_run_clean, still_conflicted, error")
     exit 0
   end
 

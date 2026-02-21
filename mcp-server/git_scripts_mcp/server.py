@@ -641,7 +641,7 @@ class GitScriptsMCP:
         )
 
     async def _handle_git_extract_conflict_files(self, args: Dict[str, Any]) -> CallToolResult:
-        """Extract conflict files using git-diff-123 --extract."""
+        """Extract conflict files using git-diff-123 --tool-extract."""
         file = args.get("file")
         if not file:
             return CallToolResult(
@@ -653,7 +653,7 @@ class GitScriptsMCP:
             )
 
         script_path = self._get_script_path("git-diff-123")
-        cmd = [str(script_path), "--extract", "--json", file]
+        cmd = [str(script_path), "--tool-extract", file]
 
         result = await self._run_command(cmd)
 
@@ -708,7 +708,7 @@ class GitScriptsMCP:
         )
 
     async def _handle_git_remerge_from_files(self, args: Dict[str, Any]) -> CallToolResult:
-        """Re-merge using edited files via git-diff-123 --remerge."""
+        """Re-merge using edited files via git-diff-123 --tool-remerge."""
         file = args.get("file")
         ours_path = args.get("ours_path")
         base_path = args.get("base_path")
@@ -724,7 +724,7 @@ class GitScriptsMCP:
             )
 
         script_path = self._get_script_path("git-diff-123")
-        cmd = [str(script_path), "--json", "--remerge", file, ours_path, base_path, theirs_path]
+        cmd = [str(script_path), "--tool-remerge", file, ours_path, base_path, theirs_path]
 
         result = await self._run_command(cmd)
         raw_stdout = result.stdout.decode().strip()

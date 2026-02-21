@@ -122,6 +122,6 @@ def test_remerge_handler_parses_json_still_conflicted_payload(monkeypatch):
         )
     )
 
-    assert "--json" in captured_cmd["cmd"]
+    assert "--tool-remerge" in captured_cmd["cmd"]
     assert result.isError is True
     assert "still conflicted" in result.content[0].text
