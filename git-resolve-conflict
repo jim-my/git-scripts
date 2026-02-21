@@ -184,14 +184,14 @@ Choose a diff to view for '#{file}':"
 end
 
 def extract_file_at_revision(rev, file, output_path)
-  content, status = Open3.capture2("git", "show", "#{rev}:#{file}")
+  content, _stderr, status = Open3.capture3("git", "show", "#{rev}:#{file}")
   return false unless status.success?
   File.write(output_path, content)
   true
 end
 
 def audit_merge(file, commit, json_output = false)
-  parents_line, status = Open3.capture2("git", "rev-list", "--parents", "-n", "1", commit)
+  parents_line, _stderr, status = Open3.capture3("git", "rev-list", "--parents", "-n", "1", commit)
   unless status.success?
     msg = "Could not resolve commit '#{commit}'"
     if json_output
@@ -278,7 +278,7 @@ def audit_merge(file, commit, json_output = false)
 end
 
 def get_merge_commit_parents(commit)
-  parents_line, status = Open3.capture2("git", "rev-list", "--parents", "-n", "1", commit)
+  parents_line, _stderr, status = Open3.capture3("git", "rev-list", "--parents", "-n", "1", commit)
   return nil unless status.success?
   fields = parents_line.strip.split
   return nil if fields.length < 3

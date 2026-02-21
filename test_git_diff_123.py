@@ -274,6 +274,32 @@ def init_repo_with_clean_merge_commit(tmp_path: Path) -> Path:
     return repo
 
 
+def init_repo_with_add_delete_merge_commit(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_add_delete_merge"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "root.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "root.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "only-feature.txt").write_text("feature only\n", encoding="utf-8")
+    run(["git", "add", "only-feature.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "add feature-only file"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "only-main.txt").write_text("main only\n", encoding="utf-8")
+    run(["git", "add", "only-main.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "add main-only file"], cwd=repo)
+
+    run(["git", "merge", "--no-ff", "-qm", "merge feature add/delete", "feature"], cwd=repo)
+    return repo
+
+
 def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     repo = init_repo_with_conflict_merge_commit(tmp_path)
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -416,3 +442,10 @@ def test_default_mode_missing_file_has_clear_not_found_error(tmp_path):
     result = run([str(SCRIPT_PATH), "does-not-exist.txt"], cwd=repo, check=False)
     assert result.returncode == 1
     assert "not found" in result.stdout.lower() or "not found" in result.stderr.lower()
+
+
+def test_find_does_not_leak_git_show_fatal_errors(tmp_path):
+    repo = init_repo_with_add_delete_merge_commit(tmp_path)
+    result = run([str(SCRIPT_PATH), "--find"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fatal: path" not in result.stderr.lower()
