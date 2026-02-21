@@ -39,6 +39,17 @@ def get_merge_base(ours, theirs)
   base
 end
 
+def blob_content_at_revision(rev, file)
+  content, _stderr, status = Open3.capture3("git", "show", "#{rev}:#{file}")
+  return nil unless status.success?
+  content
+end
+
+def file_exists_at_revision?(rev, file)
+  _out, _err, status = Open3.capture3("git", "cat-file", "-e", "#{rev}:#{file}")
+  status.success?
+end
+
 def file_diff_identical?(left, right)
   system("git", "diff", "--no-index", "--quiet", "--", left, right)
   $?.success?
@@ -295,26 +306,60 @@ end
 
 def conflict_likely_for_merge_file(commit, file)
   parents = get_merge_commit_parents(commit)
-  return nil unless parents
+  return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "not_a_merge_commit" } unless parents
   parent1, parent2 = parents
   base = get_merge_base(parent1, parent2)
-  return nil if base.empty?
+  if base.empty?
+    return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "missing_merge_base" }
+  end
+
+  exists_ours = file_exists_at_revision?(parent1, file)
+  exists_theirs = file_exists_at_revision?(parent2, file)
+  exists_base = file_exists_at_revision?(base, file)
+
+  unless exists_ours && exists_theirs && exists_base
+    if !exists_base && exists_ours && exists_theirs
+      ours_content = blob_content_at_revision(parent1, file)
+      theirs_content = blob_content_at_revision(parent2, file)
+      same_add = !ours_content.nil? && ours_content == theirs_content
+      if same_add
+        return { "conflict_likely" => false, "status" => "likely_clean", "reason" => "both_added_same_content" }
+      end
+      return { "conflict_likely" => true, "status" => "likely_conflict", "reason" => "both_added_different_content" }
+    end
+
+    missing = []
+    missing << "ours" unless exists_ours
+    missing << "theirs" unless exists_theirs
+    missing << "base" unless exists_base
+    return {
+      "conflict_likely" => nil,
+      "status" => "non_comparable",
+      "reason" => "missing_in_#{missing.join('_')}"
+    }
+  end
 
   Dir.mktmpdir("git-resolve-conflict-find-") do |tmpdir|
     ours_path = File.join(tmpdir, "ours")
     theirs_path = File.join(tmpdir, "theirs")
     base_path = File.join(tmpdir, "base")
 
-    return nil unless extract_file_at_revision(parent1, file, ours_path)
-    return nil unless extract_file_at_revision(parent2, file, theirs_path)
-    return nil unless extract_file_at_revision(base, file, base_path)
+    unless extract_file_at_revision(parent1, file, ours_path) &&
+           extract_file_at_revision(parent2, file, theirs_path) &&
+           extract_file_at_revision(base, file, base_path)
+      return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "extract_failed" }
+    end
 
     _out, _err, status = Open3.capture3("git", "merge-file", "-p", ours_path, base_path, theirs_path)
-    return true if status.exitstatus == 1
-    return false if status.exitstatus == 0
+    if status.exitstatus == 1
+      return { "conflict_likely" => true, "status" => "likely_conflict", "reason" => "merge_file_conflict" }
+    end
+    if status.exitstatus == 0
+      return { "conflict_likely" => false, "status" => "likely_clean", "reason" => "merge_file_clean" }
+    end
   end
 
-  nil
+  { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "merge_file_error" }
 end
 
 def build_find_log_command(log_filters, path_filter = nil)
@@ -349,12 +394,16 @@ def find_merges(path_filter = nil, log_filters = [], json_output = false)
   results = []
   commits.each do |commit|
     files = changed_files_for_merge(commit, path_filter)
-    flags = files.map { |f| conflict_likely_for_merge_file(commit, f) }.compact
-    conflict_likely = !flags.empty? && flags.any?
+    analyses = files.map { |f| conflict_likely_for_merge_file(commit, f) }
+    analyzed = analyses.count { |a| !a["conflict_likely"].nil? }
+    likely_conflicts = analyses.count { |a| a["conflict_likely"] == true }
+    non_comparable = analyses.count { |a| a["status"] == "non_comparable" }
+    conflict_likely = likely_conflicts > 0
     results << {
       "commit" => commit,
       "conflict_likely" => conflict_likely,
-      "files_analyzed" => flags.length
+      "files_analyzed" => analyzed,
+      "files_non_comparable" => non_comparable
     }
   end
 
@@ -371,7 +420,7 @@ def find_merges(path_filter = nil, log_filters = [], json_output = false)
   puts "Merge conflict-likelihood scan (HEAD history):"
   results.each do |r|
     label = r["conflict_likely"] ? "likely_had_conflicts" : "likely_clean"
-    puts "#{r['commit'][0..11]}  #{label}  files_analyzed=#{r['files_analyzed']}"
+    puts "#{r['commit'][0..11]}  #{label}  files_analyzed=#{r['files_analyzed']}  non_comparable=#{r['files_non_comparable']}"
   end
   true
 end
@@ -390,9 +439,12 @@ def find_merge_commit_files(commit, path_filter = nil, json_output = false)
 
   files = changed_files_for_merge(commit, path_filter)
   results = files.map do |file|
+    analysis = conflict_likely_for_merge_file(commit, file)
     {
       "file" => file,
-      "conflict_likely" => conflict_likely_for_merge_file(commit, file)
+      "conflict_likely" => analysis["conflict_likely"],
+      "status" => analysis["status"],
+      "reason" => analysis["reason"]
     }
   end
 
@@ -406,9 +458,21 @@ def find_merge_commit_files(commit, path_filter = nil, json_output = false)
     puts "(no files matched)"
     return true
   end
-  results.each do |r|
-    verdict = r["conflict_likely"] == true ? "likely_conflict" : (r["conflict_likely"] == false ? "likely_clean" : "unknown")
-    puts "#{verdict}  #{r['file']}"
+
+  grouped = {
+    "likely_conflict" => [],
+    "likely_clean" => [],
+    "non_comparable" => []
+  }
+  results.each { |r| grouped[r["status"]] << r }
+
+  grouped.each do |status, entries|
+    next if entries.empty?
+    puts "#{status}:"
+    entries.each do |r|
+      detail = r["reason"] ? " (#{r['reason']})" : ""
+      puts "  - #{r['file']}#{detail}"
+    end
   end
   true
 end
