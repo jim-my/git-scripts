@@ -176,6 +176,9 @@ git reup              # pull with rebase
 git diff-123 path/to/conflicted_file
 # -> choose edit view, save changes, and the script auto-retries merge
 # -> if merge becomes clean, it applies and stages automatically
+
+# dry-run mode: check retry outcomes without writing/staging resolved output
+git diff-123 --dry-run path/to/conflicted_file
 ```
 
 JSON mode is available for tool integrations:
