@@ -185,6 +185,9 @@ git diff-123 --extract --json --no-guided path/to/conflicted_file
 
 # non-interactive JSON remerge
 git diff-123 --json --remerge path/to/conflicted_file OURS_PATH BASE_PATH THEIRS_PATH
+
+# audit a historical merge commit for potential conflict-resolution risk
+git diff-123 --audit-merge <merge_commit> path/to/file --json
 ```
 
 `--json --remerge` statuses:
@@ -192,6 +195,11 @@ git diff-123 --json --remerge path/to/conflicted_file OURS_PATH BASE_PATH THEIRS
 - `dry_run_clean` - clean merge possible, but no file changes were written
 - `still_conflicted` - edited inputs still conflict; includes `merged_preview`
 - `error` - command failed (missing files, stage failure, or merge-file error)
+
+`--audit-merge ... --json` fields:
+- `status` - `ok` or `error`
+- `conflict_likely` - `true` if replaying original ours/base/theirs suggests textual conflict
+- `resolved`, `original_ours`, `original_theirs`, `original_base` - temp file paths for direct diff review
 
 ### Historical Analysis
 ```bash

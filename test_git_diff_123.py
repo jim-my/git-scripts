@@ -219,3 +219,88 @@ def test_extract_json_uses_guided_prompt_in_tty_session(tmp_path):
     assert "Choose a diff to view for 'f.txt'" in decoded, decoded
     assert "4. Retry without editing" in decoded, decoded
     assert "4. Re-merge now" not in decoded, decoded
+
+
+def init_repo_with_conflict_merge_commit(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_conflict_merge"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "f.txt").write_text("line1\nline2\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "f.txt").write_text("line1\nours\n", encoding="utf-8")
+    run(["git", "commit", "-am", "feature change"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "f.txt").write_text("line1\ntheirs\n", encoding="utf-8")
+    run(["git", "commit", "-am", "main change"], cwd=repo)
+
+    merge = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge.returncode != 0
+    (repo / "f.txt").write_text("line1\nresolved\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "manual merge resolution"], cwd=repo)
+
+    return repo
+
+
+def init_repo_with_clean_merge_commit(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_clean_merge"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "f.txt").write_text("a\nb\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "f.txt").write_text("a\nb\nfeature_line\n", encoding="utf-8")
+    run(["git", "commit", "-am", "feature append"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "f.txt").write_text("main_prefix\na\nb\n", encoding="utf-8")
+    run(["git", "commit", "-am", "main prepend"], cwd=repo)
+
+    run(["git", "merge", "--no-ff", "-qm", "clean merge", "feature"], cwd=repo)
+    return repo
+
+
+def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
+    repo = init_repo_with_conflict_merge_commit(tmp_path)
+    commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run(
+        [str(SCRIPT_PATH), "--audit-merge", commit, "f.txt", "--json"],
+        cwd=repo,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["conflict_likely"] is True
+
+
+def test_audit_merge_json_reports_conflict_likely_false(tmp_path):
+    repo = init_repo_with_clean_merge_commit(tmp_path)
+    commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run(
+        [str(SCRIPT_PATH), "--audit-merge", commit, "f.txt", "--json"],
+        cwd=repo,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["conflict_likely"] is False

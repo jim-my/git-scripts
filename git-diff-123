@@ -21,11 +21,53 @@ end
 
 def get_merge_base(ours, theirs)
   # Try octopus merge-base first for criss-cross merges
-  base = `git merge-base --octopus #{ours} #{theirs} 2>/dev/null`.strip
+  base, status = Open3.capture2("git", "merge-base", "--octopus", ours, theirs)
+  base = base.strip
+  unless status.success?
+    base = ""
+  end
   if base.empty?
-    base = `git merge-base #{ours} #{theirs}`.strip
+    base, status = Open3.capture2("git", "merge-base", ours, theirs)
+    base = status.success? ? base.strip : ""
   end
   base
+end
+
+def file_diff_identical?(left, right)
+  system("git", "diff", "--no-index", "--quiet", "--", left, right)
+  $?.success?
+end
+
+def review_resolved_vs_originals(resolved_path, original_ours, original_theirs, original_base, label_prefix = "resolved")
+  editor = get_git_editor
+
+  loop do
+    ours_same = file_diff_identical?(resolved_path, original_ours)
+    theirs_same = file_diff_identical?(resolved_path, original_theirs)
+    base_same = file_diff_identical?(resolved_path, original_base)
+
+    puts "\nPost-merge review:"
+    puts "1. Diff #{label_prefix} vs original ours#{ours_same ? ' (no difference)' : ''}"
+    puts "2. Diff #{label_prefix} vs original theirs#{theirs_same ? ' (no difference)' : ''}"
+    puts "3. Diff #{label_prefix} vs original base#{base_same ? ' (no difference)' : ''}"
+    puts "4. Accept and continue"
+    print "> "
+    input = STDIN.gets
+    choice = input ? input.strip : '4'
+
+    case choice
+    when '1'
+      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", original_ours, resolved_path)
+    when '2'
+      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", original_theirs, resolved_path)
+    when '3'
+      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", original_base, resolved_path)
+    when '4'
+      return true
+    else
+      puts "Invalid choice."
+    end
+  end
 end
 
 def has_write_tree_support?
@@ -136,6 +178,12 @@ def run_guided_resolution(file, dry_run = false)
   file_ours = extracted[:ours]
   file_base = extracted[:base]
   file_theirs = extracted[:theirs]
+  original_ours = File.join(extracted[:tmpdir], "original_ours")
+  original_base = File.join(extracted[:tmpdir], "original_base")
+  original_theirs = File.join(extracted[:tmpdir], "original_theirs")
+  FileUtils.cp(file_ours, original_ours)
+  FileUtils.cp(file_base, original_base)
+  FileUtils.cp(file_theirs, original_theirs)
 
   loop do
     puts "
@@ -171,10 +219,107 @@ Choose a diff to view for '#{file}':"
 
     next unless should_try_remerge
 
-    return true if remerge_from_files(file, file_ours, file_base, file_theirs, dry_run, false)
+    if remerge_from_files(file, file_ours, file_base, file_theirs, dry_run, false)
+      review_resolved_vs_originals(file, original_ours, original_theirs, original_base)
+      return true
+    end
 
     puts "\nStill conflicted. Keep editing or quit."
   end
+end
+
+def extract_file_at_revision(rev, file, output_path)
+  content, status = Open3.capture2("git", "show", "#{rev}:#{file}")
+  return false unless status.success?
+  File.write(output_path, content)
+  true
+end
+
+def audit_merge(file, commit, json_output = false)
+  parents_line, status = Open3.capture2("git", "rev-list", "--parents", "-n", "1", commit)
+  unless status.success?
+    msg = "Could not resolve commit '#{commit}'"
+    if json_output
+      puts JSON.generate({ status: "error", message: msg })
+    else
+      puts "Error: #{msg}"
+    end
+    return false
+  end
+
+  fields = parents_line.strip.split
+  unless fields.length >= 3
+    msg = "Commit '#{commit}' is not a merge commit."
+    if json_output
+      puts JSON.generate({ status: "error", message: msg })
+    else
+      puts "Error: #{msg}"
+    end
+    return false
+  end
+
+  parent1 = fields[1]
+  parent2 = fields[2]
+  base = get_merge_base(parent1, parent2)
+  if base.empty?
+    msg = "Could not determine merge base for #{parent1[0..7]} and #{parent2[0..7]}"
+    if json_output
+      puts JSON.generate({ status: "error", message: msg })
+    else
+      puts "Error: #{msg}"
+    end
+    return false
+  end
+
+  tmpdir = Dir.mktmpdir("git-diff-123-audit-")
+  resolved_path = File.join(tmpdir, "resolved")
+  ours_path = File.join(tmpdir, "original_ours")
+  theirs_path = File.join(tmpdir, "original_theirs")
+  base_path = File.join(tmpdir, "original_base")
+
+  unless extract_file_at_revision(commit, file, resolved_path) &&
+         extract_file_at_revision(parent1, file, ours_path) &&
+         extract_file_at_revision(parent2, file, theirs_path) &&
+         extract_file_at_revision(base, file, base_path)
+    msg = "File '#{file}' not available at one or more required revisions."
+    if json_output
+      puts JSON.generate({ status: "error", message: msg })
+    else
+      puts "Error: #{msg}"
+    end
+    return false
+  end
+
+  _merged_content, _merge_stderr, merge_status = Open3.capture3(
+    "git", "merge-file", "-p", ours_path, base_path, theirs_path
+  )
+  conflict_likely = merge_status.exitstatus == 1
+
+  if json_output
+    puts JSON.generate({
+      status: "ok",
+      commit: commit,
+      file: file,
+      conflict_likely: conflict_likely,
+      resolved: resolved_path,
+      original_ours: ours_path,
+      original_theirs: theirs_path,
+      original_base: base_path
+    })
+    return true
+  end
+
+  puts "Audit merge commit #{commit[0..7]} for '#{file}':"
+  puts "Parent1 (ours): #{parent1[0..7]}"
+  puts "Parent2 (theirs): #{parent2[0..7]}"
+  puts "Base: #{base[0..7]}"
+  if conflict_likely
+    puts "Conflict likelihood: likely (manual resolution risk worth reviewing)"
+  else
+    puts "Conflict likelihood: low (clean auto-merge likely)"
+  end
+  review_resolved_vs_originals(resolved_path, ours_path, theirs_path, base_path, "resolved@#{commit[0..7]}")
+  true
 end
 
 def remerge_from_files(file, ours_path, base_path, theirs_path, dry_run = false, json_output = false)
@@ -354,12 +499,24 @@ def main
     return
   end
 
+  if ARGV[0] == '--audit-merge'
+    commit = ARGV[1]
+    file = ARGV[2]
+    unless commit && file
+      puts("USAGE: #{File.basename __FILE__} --audit-merge COMMIT FILE [--json]")
+      exit 0
+    end
+    success = audit_merge(file, commit, json_output)
+    exit(success ? 0 : 1)
+  end
+
   file = ARGV.shift
   if !file || file == '--help' || file == '-h'
     puts("USAGE: #{File.basename __FILE__} [--dry-run] [--json] [--no-guided] FILE")
     puts("       #{File.basename __FILE__} --extract [--json] [--no-guided] FILE")
     puts("       #{File.basename __FILE__} [--json] [--dry-run] --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
     puts("       #{File.basename __FILE__} --simulate FILE")
+    puts("       #{File.basename __FILE__} --audit-merge COMMIT FILE [--json]")
     puts("")
     puts("Enhanced 3-way merge conflict resolution")
     puts("--extract: Write stage 2/1/3 (ours/base/theirs) to temp files")
