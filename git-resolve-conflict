@@ -8,8 +8,45 @@ require 'fileutils'
 require 'open3'
 require 'shellwords'
 
+$color_mode = "auto"
+
+def parse_color_mode!(args)
+  mode = "auto"
+  kept = []
+  i = 0
+  while i < args.length
+    arg = args[i]
+    if arg == "--no-color"
+      mode = "never"
+    elsif arg.start_with?("--color=")
+      value = arg.split("=", 2)[1]
+      unless %w[auto always never].include?(value)
+        puts "Error: invalid --color value '#{value}' (use auto|always|never)"
+        exit 1
+      end
+      mode = value
+    elsif arg == "--color"
+      value = args[i + 1]
+      if value.nil? || value.start_with?("--") || !%w[auto always never].include?(value)
+        puts "Error: --color requires one of auto|always|never"
+        exit 1
+      end
+      mode = value
+      i += 1
+    else
+      kept << arg
+    end
+    i += 1
+  end
+  args.replace(kept)
+  $color_mode = mode
+end
+
 def color_enabled?
-  STDOUT.tty? && ENV.fetch("TERM", "dumb") != "dumb" && ENV["NO_COLOR"].nil?
+  return true if $color_mode == "always"
+  return false if $color_mode == "never"
+  return false if ENV["NO_COLOR"]
+  STDOUT.tty? && ENV.fetch("TERM", "dumb") != "dumb"
 end
 
 def colorize(text, code)
@@ -171,6 +208,8 @@ def run_guided_resolution(file, dry_run = false)
   FileUtils.cp(file_base, original_base)
   FileUtils.cp(file_theirs, original_theirs)
 
+  print_conflict_summary(file)
+
   loop do
     puts "
 Choose a diff to view for '#{file}':"
@@ -212,6 +251,76 @@ Choose a diff to view for '#{file}':"
 
     puts "\nStill conflicted. Keep editing or quit."
   end
+end
+
+def parse_conflict_hunks(file)
+  lines = File.readlines(file, encoding: "utf-8")
+  hunks = []
+  i = 0
+  while i < lines.length
+    if lines[i].start_with?("<<<<<<< ")
+      start_i = i
+      mid_i = nil
+      end_i = nil
+      j = i + 1
+      while j < lines.length
+        if mid_i.nil? && lines[j].start_with?("=======")
+          mid_i = j
+        elsif lines[j].start_with?(">>>>>>> ")
+          end_i = j
+          break
+        end
+        j += 1
+      end
+      break unless mid_i && end_i
+
+      context = nil
+      k = start_i - 1
+      while k >= 0
+        stripped = lines[k].strip
+        unless stripped.empty? || stripped.start_with?("<<<<<<<", "=======", ">>>>>>>")
+          context = stripped
+          break
+        end
+        k -= 1
+      end
+
+      hunks << {
+        start_line: start_i + 1,
+        ours_lines: mid_i - start_i - 1,
+        theirs_lines: end_i - mid_i - 1,
+        context: context
+      }
+      i = end_i + 1
+      next
+    end
+    i += 1
+  end
+  hunks
+end
+
+def print_conflict_summary(file)
+  hunks = parse_conflict_hunks(file)
+  return if hunks.empty?
+
+  max_side_lines = hunks.map { |h| [h[:ours_lines], h[:theirs_lines]].max }.max || 0
+  risk = if hunks.length >= 5 || max_side_lines >= 20
+           "high"
+         elsif hunks.length >= 2 || max_side_lines >= 8
+           "medium"
+         else
+           "low"
+         end
+
+  risk_color = risk == "high" ? 31 : (risk == "medium" ? 33 : 32)
+  puts "\nConflict summary for '#{file}':"
+  puts "  hunks=#{hunks.length}  risk=#{colorize(risk, risk_color)}"
+  puts "  preview:"
+  hunks.first(3).each do |h|
+    context = h[:context] ? " | context: #{h[:context]}" : ""
+    puts "    - line #{h[:start_line]} (ours=#{h[:ours_lines]}, theirs=#{h[:theirs_lines]})#{context}"
+  end
+  puts "    ... (#{hunks.length - 3} more)" if hunks.length > 3
 end
 
 def extract_file_at_revision(rev, file, output_path)
@@ -578,6 +687,7 @@ end
 
 def main
   args = ARGV.dup
+  parse_color_mode!(args)
   log_filters = []
   if (sep_index = args.index("--"))
     log_filters = args[(sep_index + 1)..] || []
@@ -658,9 +768,9 @@ def main
 
   file = args.shift
   if !file || file == '--help' || file == '-h'
-    puts("USAGE: #{File.basename __FILE__} [--dry-run] FILE")
-    puts("       #{File.basename __FILE__} --commit COMMIT [FILE] [--json]")
-    puts("       #{File.basename __FILE__} --find [FILE] [--commit COMMIT] [--json] [-- <git-log-filters>]")
+    puts("USAGE: #{File.basename __FILE__} [--dry-run] [--color MODE|--no-color] FILE")
+    puts("       #{File.basename __FILE__} [--color MODE|--no-color] --commit COMMIT [FILE] [--json]")
+    puts("       #{File.basename __FILE__} [--color MODE|--no-color] --find [FILE] [--commit COMMIT] [--json] [-- <git-log-filters>]")
     puts("")
     puts("Enhanced 3-way merge conflict resolution")
     puts("FILE: Guided conflict resolution for current working tree")
@@ -668,6 +778,8 @@ def main
     puts("--commit: Audit a merge commit (summary mode without FILE, deep audit with FILE)")
     puts("--find: Find likely-conflicted merge commits on current branch")
     puts("--json: Emit machine-readable JSON output")
+    puts("--color: Colorized output mode: auto|always|never")
+    puts("--no-color: Disable colored output")
     exit 0
   end
 

@@ -216,6 +216,7 @@ def test_default_file_mode_uses_guided_prompt_in_tty_session(tmp_path):
     os.close(master_fd)
 
     decoded = output.decode("utf-8", errors="replace")
+    assert "Conflict summary for 'f.txt':" in decoded, decoded
     assert "Choose a diff to view for 'f.txt'" in decoded, decoded
     assert "4. Retry without editing" in decoded, decoded
     assert "4. Re-merge now" not in decoded, decoded
@@ -478,3 +479,23 @@ def test_commit_summary_text_groups_statuses_prettily(tmp_path):
     )
     assert "non_comparable(skipped):" in text
     assert "  - " in text or "  + " in text or "  ~ " in text
+
+
+def test_color_always_adds_ansi_sequences_in_text_mode(tmp_path):
+    repo = init_repo_with_add_delete_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+    result = run([str(SCRIPT_PATH), "--color=always", "--commit", head], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "\x1b[" in result.stdout
+
+
+def test_no_color_overrides_color_always(tmp_path):
+    repo = init_repo_with_add_delete_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+    result = run(
+        [str(SCRIPT_PATH), "--color=always", "--no-color", "--commit", head],
+        cwd=repo,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "\x1b[" not in result.stdout
