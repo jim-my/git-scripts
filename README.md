@@ -198,6 +198,15 @@ git diff-123 --commit [<merge_commit>] path/to/file --json
 # Search through commit history
 git search-in-each-commit --keyword "TODO" --since "2024-01-01"
 
+# Find files in current branch trees
+git find_file "config\\.yml" --local
+
+# Find file touches in branch history
+git find_file "settings\\.py" --history --local
+
+# Find deleted file events
+git find_file "legacy\\.txt" --deleted --local
+
 # Find when commit reached main branch
 git when-reached-branch abc1234 main
 

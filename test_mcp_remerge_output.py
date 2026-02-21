@@ -125,3 +125,26 @@ def test_remerge_handler_parses_json_still_conflicted_payload(monkeypatch):
     assert "--tool-remerge" in captured_cmd["cmd"]
     assert result.isError is True
     assert "still conflicted" in result.content[0].text
+
+
+def test_find_file_handler_passes_history_and_deleted_flags(monkeypatch):
+    server = GitScriptsMCP()
+    captured_cmd = {}
+
+    async def fake_run_command(cmd, input_text=None):
+        captured_cmd["cmd"] = cmd
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=b"ok\n", stderr=b"")
+
+    monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(server, "_get_script_path", lambda _: Path("/tmp/git-find_file"))
+
+    result = asyncio.run(
+        server._handle_git_find_file(
+            {"pattern": "foo", "local": True, "history": True, "deleted": True}
+        )
+    )
+
+    assert result.isError is False
+    assert "--local" in captured_cmd["cmd"]
+    assert "--history" in captured_cmd["cmd"]
+    assert "--deleted" in captured_cmd["cmd"]

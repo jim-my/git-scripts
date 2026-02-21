@@ -220,7 +220,7 @@ class GitScriptsMCP:
                     Pattern is treated as grep regex.
 
                     📋 USE WHEN: Need to find files across branches, track file history,
-                    or locate configuration/build files in different branch contexts."""
+                    locate deleted paths, or inspect configuration/build files in branch contexts."""
                 ),
                 inputSchema={
                     "type": "object",
@@ -232,6 +232,16 @@ class GitScriptsMCP:
                         "local": {
                             "type": "boolean",
                             "description": "Search local branches only (default: remote branches)",
+                            "default": False,
+                        },
+                        "history": {
+                            "type": "boolean",
+                            "description": "Search file history across commits",
+                            "default": False,
+                        },
+                        "deleted": {
+                            "type": "boolean",
+                            "description": "Search only deleted file events in history",
                             "default": False,
                         },
                     },
@@ -590,6 +600,10 @@ class GitScriptsMCP:
 
         if args.get("local"):
             cmd.append("--local")
+        if args.get("history"):
+            cmd.append("--history")
+        if args.get("deleted"):
+            cmd.append("--deleted")
 
         result = await self._run_command(cmd)
 

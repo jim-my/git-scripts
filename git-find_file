@@ -10,12 +10,13 @@ set -euo pipefail
 #   Useful for finding where a specific file exists in different branches.
 #
 # USAGE:
-#   git-find_file <pattern> [--local]
+#   git-find_file <pattern> [--local] [--history] [--deleted]
 #
 # EXAMPLES:
-#   git-find_file "config.yml"        # Find config.yml in remote branches
-#   git-find_file "*.py" --local      # Find Python files in local branches
-#   git-find_file "test_.*\.py"       # Find test files using regex
+#   git-find_file "config.yml"                   # Find current files in remote branches
+#   git-find_file "*.py" --local                 # Find current files in local branches
+#   git-find_file "old_file.txt" --deleted       # Find deleted file events in history
+#   git-find_file "settings.py" --history --local # Find all history touches in local branches
 #
 # Original credit: http://stackoverflow.com/questions/372506/how-can-i-search-git-branches-for-a-file-or-directory/372654#372654
 # =============================================================================
@@ -23,7 +24,7 @@ set -euo pipefail
 # Usage function
 usage() {
     cat << 'EOF'
-Usage: git-find_file <pattern> [--local]
+Usage: git-find_file <pattern> [--local] [--history|--deleted]
 
 Find files matching a pattern across Git branches.
 
@@ -32,12 +33,15 @@ Arguments:
 
 Options:
   --local    Search local branches only (default: remote branches)
+  --history  Search file history (all commits touching matching paths)
+  --deleted  Search only deletion events in history
   --help     Show this help message
 
 Examples:
-  git-find_file "config.yml"        # Find config.yml in remote branches
-  git-find_file "*.py" --local      # Find Python files in local branches
-  git-find_file "test_.*\.py"       # Find test files using regex
+  git-find_file "config.yml"                   # Find config.yml in remote branches
+  git-find_file "*.py" --local                 # Find Python files in local branches
+  git-find_file "old_file.txt" --deleted       # Find deletion events
+  git-find_file "settings.py" --history --local # Find all history touches
 
 Note: Pattern is treated as a grep regex, so special characters need escaping.
 EOF
@@ -67,11 +71,19 @@ parse_arguments() {
 
     PATTERN=""
     SEARCH_LOCAL=false
+    SEARCH_HISTORY=false
+    SEARCH_DELETED=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --local)
                 SEARCH_LOCAL=true
+                ;;
+            --history)
+                SEARCH_HISTORY=true
+                ;;
+            --deleted)
+                SEARCH_DELETED=true
                 ;;
             --help|-h)
                 usage
@@ -93,21 +105,39 @@ parse_arguments() {
     if [[ -z "$PATTERN" ]]; then
         error_exit "Pattern is required. Use --help for usage information."
     fi
+
+    if [[ "$SEARCH_HISTORY" == true && "$SEARCH_DELETED" == true ]]; then
+        error_exit "Use either --history or --deleted, not both."
+    fi
 }
 
 # Main search function
 search_files() {
     local pattern="$1"
     local search_local="$2"
+    local search_history="$3"
+    local search_deleted="$4"
 
     # Set location based on search type
     local loc
     if [[ "$search_local" == true ]]; then
         loc="refs/heads"
-        echo "Searching local branches for pattern: $pattern"
+        if [[ "$search_deleted" == true ]]; then
+            echo "Searching local branch history for deleted paths matching: $pattern"
+        elif [[ "$search_history" == true ]]; then
+            echo "Searching local branch history for pattern: $pattern"
+        else
+            echo "Searching local branches for pattern: $pattern"
+        fi
     else
         loc="refs/remotes/origin"
-        echo "Searching remote branches for pattern: $pattern"
+        if [[ "$search_deleted" == true ]]; then
+            echo "Searching remote branch history for deleted paths matching: $pattern"
+        elif [[ "$search_history" == true ]]; then
+            echo "Searching remote branch history for pattern: $pattern"
+        else
+            echo "Searching remote branches for pattern: $pattern"
+        fi
     fi
 
     local found_any=false
@@ -118,19 +148,49 @@ search_files() {
             continue
         fi
 
-        # Search for files in this branch
-        local found_files
-        if found_files=$(git ls-tree -r --name-only "$branch" 2>/dev/null | grep "$pattern" 2>/dev/null); then
-            found_any=true
-            local branch_name
-            branch_name="${branch#$loc/}"
+        local branch_name
+        branch_name="${branch#$loc/}"
 
-            # Print each found file with branch name
-            while IFS= read -r file; do
-                if [[ -n "$file" ]]; then
-                    echo "$branch_name:$file"
+        if [[ "$search_history" == true || "$search_deleted" == true ]]; then
+            local current_commit=""
+            while IFS= read -r line; do
+                if [[ -z "$line" ]]; then
+                    continue
                 fi
-            done <<< "$found_files"
+
+                if [[ "$line" =~ ^[0-9a-f]{40}$ ]]; then
+                    current_commit="$line"
+                    continue
+                fi
+
+                if printf '%s\n' "$line" | grep "$pattern" >/dev/null 2>&1; then
+                    found_any=true
+                    if [[ -n "$current_commit" ]]; then
+                        echo "$branch_name:${current_commit:0:12}:$line"
+                    else
+                        echo "$branch_name:$line"
+                    fi
+                fi
+            done < <(
+                if [[ "$search_deleted" == true ]]; then
+                    git log --diff-filter=D --pretty=format:%H --name-only "$branch" -- 2>/dev/null
+                else
+                    git log --pretty=format:%H --name-only "$branch" -- 2>/dev/null
+                fi
+            )
+        else
+            # Search for files in current tree of this branch
+            local found_files
+            if found_files=$(git ls-tree -r --name-only "$branch" 2>/dev/null | grep "$pattern" 2>/dev/null); then
+                found_any=true
+
+                # Print each found file with branch name
+                while IFS= read -r file; do
+                    if [[ -n "$file" ]]; then
+                        echo "$branch_name:$file"
+                    fi
+                done <<< "$found_files"
+            fi
         fi
     done < <(git for-each-ref --format="%(refname)" "$loc" 2>/dev/null)
 
@@ -144,7 +204,7 @@ search_files() {
 main() {
     parse_arguments "$@"
     check_git_repo
-    search_files "$PATTERN" "$SEARCH_LOCAL"
+    search_files "$PATTERN" "$SEARCH_LOCAL" "$SEARCH_HISTORY" "$SEARCH_DELETED"
 }
 
 # Run main function with all arguments
