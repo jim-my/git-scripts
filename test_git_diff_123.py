@@ -279,7 +279,7 @@ def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
 
     result = run(
-        [str(SCRIPT_PATH), "--audit-merge", commit, "f.txt", "--json"],
+        [str(SCRIPT_PATH), "--commit", commit, "f.txt", "--json"],
         cwd=repo,
         check=False,
     )
@@ -295,7 +295,7 @@ def test_audit_merge_json_reports_conflict_likely_false(tmp_path):
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
 
     result = run(
-        [str(SCRIPT_PATH), "--audit-merge", commit, "f.txt", "--json"],
+        [str(SCRIPT_PATH), "--commit", commit, "f.txt", "--json"],
         cwd=repo,
         check=False,
     )
@@ -304,3 +304,18 @@ def test_audit_merge_json_reports_conflict_likely_false(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["conflict_likely"] is False
+
+
+def test_commit_alias_runs_merge_audit(tmp_path):
+    repo = init_repo_with_clean_merge_commit(tmp_path)
+    commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run(
+        [str(SCRIPT_PATH), "--commit", commit, "f.txt", "--json"],
+        cwd=repo,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
