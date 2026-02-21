@@ -341,3 +341,58 @@ def test_legacy_git_diff_123_shim_forwards_to_new_command(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
+
+
+def test_find_json_lists_likely_conflicted_merges(tmp_path):
+    repo = init_repo_with_conflict_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--find", "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    matches = [m for m in payload["merges"] if m["commit"] == head]
+    assert matches, payload
+    assert matches[0]["conflict_likely"] is True
+
+
+def test_find_commit_json_lists_file_conflict_likelihood(tmp_path):
+    repo = init_repo_with_conflict_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--find", "--commit", head, "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["commit"] == head
+    files = {entry["file"]: entry for entry in payload["files"]}
+    assert "f.txt" in files
+    assert files["f.txt"]["conflict_likely"] is True
+
+
+def test_find_supports_git_log_filter_passthrough(tmp_path):
+    repo = init_repo_with_conflict_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run(
+        [str(SCRIPT_PATH), "--find", "--json", "--", "--grep=manual merge resolution"],
+        cwd=repo,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    commits = [m["commit"] for m in payload["merges"]]
+    assert commits == [head]
+
+
+def test_find_accepts_file_before_find_flag(tmp_path):
+    repo = init_repo_with_conflict_merge_commit(tmp_path)
+    result = run(
+        [str(SCRIPT_PATH), "f.txt", "--find", "--json", "--", "--grep=manual merge resolution"],
+        cwd=repo,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert len(payload["merges"]) == 1

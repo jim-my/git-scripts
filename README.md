@@ -185,6 +185,12 @@ JSON mode is available for tool integrations:
 ```bash
 # audit a historical merge commit for potential conflict-resolution risk
 git resolve-conflict --commit [<merge_commit>] path/to/file --json
+
+# find likely-conflicted merge commits (HEAD history by default)
+git resolve-conflict --find -- --since='2025-01-01' --author='alice'
+
+# optional path filter with find
+git resolve-conflict --find path/to/file -- --since='2025-01-01'
 ```
 
 `--commit ... --json` fields:
