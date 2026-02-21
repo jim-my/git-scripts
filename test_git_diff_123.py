@@ -321,7 +321,7 @@ def test_commit_alias_runs_merge_audit(tmp_path):
     assert payload["status"] == "ok"
 
 
-def test_commit_without_hash_defaults_to_head(tmp_path):
+def test_commit_requires_explicit_sha(tmp_path):
     repo = init_repo_with_clean_merge_commit(tmp_path)
 
     result = run(
@@ -330,14 +330,14 @@ def test_commit_without_hash_defaults_to_head(tmp_path):
         check=False,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "ok"
+    assert result.returncode == 1
+    assert "not a merge commit" in (result.stdout + result.stderr).lower()
 
 
 def test_legacy_git_diff_123_shim_forwards_to_new_command(tmp_path):
     repo = init_repo_with_clean_merge_commit(tmp_path)
-    result = run([str(LEGACY_SHIM_PATH), "--commit", "f.txt", "--json"], cwd=repo, check=False)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+    result = run([str(LEGACY_SHIM_PATH), "--commit", head, "--json"], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
@@ -396,3 +396,23 @@ def test_find_accepts_file_before_find_flag(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert len(payload["merges"]) == 1
+
+
+def test_commit_with_only_sha_runs_merge_summary_mode(tmp_path):
+    repo = init_repo_with_conflict_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--commit", head, "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["commit"] == head
+    assert isinstance(payload["files"], list)
+
+
+def test_default_mode_missing_file_has_clear_not_found_error(tmp_path):
+    repo = init_repo_with_clean_merge_commit(tmp_path)
+
+    result = run([str(SCRIPT_PATH), "does-not-exist.txt"], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "not found" in result.stdout.lower() or "not found" in result.stderr.lower()
