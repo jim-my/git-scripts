@@ -1,4 +1,4 @@
-"""Regression tests for git-diff-123."""
+"""Regression tests for git-resolve-conflict."""
 
 import json
 import os
@@ -10,7 +10,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent
-SCRIPT_PATH = REPO_ROOT / "git-diff-123"
+SCRIPT_PATH = REPO_ROOT / "git-resolve-conflict"
+LEGACY_SHIM_PATH = REPO_ROOT / "git-diff-123"
 
 
 def run(cmd, cwd, check=True):
@@ -329,6 +330,14 @@ def test_commit_without_hash_defaults_to_head(tmp_path):
         check=False,
     )
 
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+
+
+def test_legacy_git_diff_123_shim_forwards_to_new_command(tmp_path):
+    repo = init_repo_with_clean_merge_commit(tmp_path)
+    result = run([str(LEGACY_SHIM_PATH), "--commit", "f.txt", "--json"], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"

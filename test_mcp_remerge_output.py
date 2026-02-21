@@ -78,7 +78,7 @@ def test_remerge_handler_reports_stdout_when_stderr_empty(monkeypatch):
         )
 
     monkeypatch.setattr(server, "_run_command", fake_run_command)
-    monkeypatch.setattr(server, "_get_script_path", lambda _: Path("/tmp/git-diff-123"))
+    monkeypatch.setattr(server, "_get_script_path", lambda _: Path("/tmp/git-resolve-conflict"))
 
     result = asyncio.run(
         server._handle_git_remerge_from_files(
@@ -109,7 +109,7 @@ def test_remerge_handler_parses_json_still_conflicted_payload(monkeypatch):
         )
 
     monkeypatch.setattr(server, "_run_command", fake_run_command)
-    monkeypatch.setattr(server, "_get_script_path", lambda _: Path("/tmp/git-diff-123"))
+    monkeypatch.setattr(server, "_get_script_path", lambda _: Path("/tmp/git-resolve-conflict"))
 
     result = asyncio.run(
         server._handle_git_remerge_from_files(

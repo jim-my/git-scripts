@@ -65,7 +65,7 @@ git wtf                          # Enhanced status
 
 ### 📊 **Diff & Comparison Tools**
 - **git-diff_with_prev** - Compare with previous version
-- **git-diff-123** - Three-way diff visualization
+- **git-resolve-conflict** - Guided merge-conflict resolution with auto re-merge and review
 - **git-diff-branch** - Compare branches with enhanced output
 - **git-diff-changed_files** - Show only changed file names
 - **git-diff-theirs_combined** - Show their changes in merge conflicts
@@ -170,21 +170,21 @@ git up                 # pull with merge
 git reup              # pull with rebase
 ```
 
-### Conflict Resolution with `git-diff-123`
+### Conflict Resolution with `git-resolve-conflict`
 ```bash
 # 1) In an active merge conflict, start guided mode
-git diff-123 path/to/conflicted_file
+git resolve-conflict path/to/conflicted_file
 # -> choose edit view, save changes, and the script auto-retries merge
 # -> if merge becomes clean, it applies and stages automatically
 
 # dry-run mode: check retry outcomes without writing/staging resolved output
-git diff-123 --dry-run path/to/conflicted_file
+git resolve-conflict --dry-run path/to/conflicted_file
 ```
 
 JSON mode is available for tool integrations:
 ```bash
 # audit a historical merge commit for potential conflict-resolution risk
-git diff-123 --commit [<merge_commit>] path/to/file --json
+git resolve-conflict --commit [<merge_commit>] path/to/file --json
 ```
 
 `--commit ... --json` fields:
@@ -289,7 +289,7 @@ Some scripts work better together:
 - git-credit
 - git-delete-local-merged
 - git-diff_with_prev
-- git-diff-123
+- git-resolve-conflict
 - git-diff-branch
 - git-diff-changed_files
 - git-diff-theirs_combined

@@ -655,7 +655,7 @@ class GitScriptsMCP:
         )
 
     async def _handle_git_extract_conflict_files(self, args: Dict[str, Any]) -> CallToolResult:
-        """Extract conflict files using git-diff-123 --tool-extract."""
+        """Extract conflict files using git-resolve-conflict --tool-extract."""
         file = args.get("file")
         if not file:
             return CallToolResult(
@@ -666,14 +666,14 @@ class GitScriptsMCP:
                 isError=True,
             )
 
-        script_path = self._get_script_path("git-diff-123")
+        script_path = self._get_script_path("git-resolve-conflict")
         cmd = [str(script_path), "--tool-extract", file]
 
         result = await self._run_command(cmd)
 
-        logger.info(f"Raw output from git-diff-123: {result.stdout.decode().strip()}")
-        logger.info(f"Stderr from git-diff-123: {result.stderr.decode().strip()}")
-        logger.info(f"Return code from git-diff-123: {result.returncode}")
+        logger.info(f"Raw output from git-resolve-conflict: {result.stdout.decode().strip()}")
+        logger.info(f"Stderr from git-resolve-conflict: {result.stderr.decode().strip()}")
+        logger.info(f"Return code from git-resolve-conflict: {result.returncode}")
 
         if result.returncode == 0:
             output = result.stdout.decode().strip()
@@ -682,7 +682,7 @@ class GitScriptsMCP:
                 data = json.loads(output)
                 logger.info(f"Parsed JSON data: {data}")
                 if "error" in data:
-                    logger.error(f"Error reported by git-diff-123: {data['error']}")
+                    logger.error(f"Error reported by git-resolve-conflict: {data['error']}")
                     return CallToolResult(
                         content=[TextContent(type="text", text=f"❌ {data['error']}")],
                         isError=True,
@@ -722,7 +722,7 @@ class GitScriptsMCP:
         )
 
     async def _handle_git_remerge_from_files(self, args: Dict[str, Any]) -> CallToolResult:
-        """Re-merge using edited files via git-diff-123 --tool-remerge."""
+        """Re-merge using edited files via git-resolve-conflict --tool-remerge."""
         file = args.get("file")
         ours_path = args.get("ours_path")
         base_path = args.get("base_path")
@@ -737,7 +737,7 @@ class GitScriptsMCP:
                 isError=True,
             )
 
-        script_path = self._get_script_path("git-diff-123")
+        script_path = self._get_script_path("git-resolve-conflict")
         cmd = [str(script_path), "--tool-remerge", file, ours_path, base_path, theirs_path]
 
         result = await self._run_command(cmd)
