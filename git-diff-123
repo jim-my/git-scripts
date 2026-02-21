@@ -79,7 +79,7 @@ def simulate_merge_with_tree(base, ours, theirs)
   end
 end
 
-def extract_conflict_files(file, json_output = false)
+def extract_conflict_files(file, json_output = false, emit_output = true)
   if check_merge_conflict(file)
     error_msg = "'#{file}' is not in a merge conflict state."
     if json_output
@@ -109,15 +109,71 @@ def extract_conflict_files(file, json_output = false)
     File.write(output_path, content)
   end
 
-  if json_output
-    puts JSON.generate({
-      tmpdir: tmpdir,
-      ours: file_ours,
-      base: file_base,
-      theirs: file_theirs
-    })
-  else
-    puts "#{tmpdir}:#{file_ours}:#{file_base}:#{file_theirs}"
+  if emit_output
+    if json_output
+      puts JSON.generate({
+        tmpdir: tmpdir,
+        ours: file_ours,
+        base: file_base,
+        theirs: file_theirs
+      })
+    else
+      puts "#{tmpdir}:#{file_ours}:#{file_base}:#{file_theirs}"
+    end
+  end
+
+  {
+    tmpdir: tmpdir,
+    ours: file_ours,
+    base: file_base,
+    theirs: file_theirs
+  }
+end
+
+def run_guided_resolution(file, dry_run = false)
+  editor = get_git_editor
+  extracted = extract_conflict_files(file, false, false)
+  file_ours = extracted[:ours]
+  file_base = extracted[:base]
+  file_theirs = extracted[:theirs]
+
+  loop do
+    puts "
+Choose a diff to view for '#{file}':"
+    puts "1. Edit Ours vs Base (auto re-merge)"
+    puts "2. Edit Theirs vs Base (auto re-merge)"
+    puts "3. Edit Theirs vs Ours (auto re-merge)"
+    puts "4. Re-merge now"
+    puts "q. Quit"
+    print "> "
+    input = STDIN.gets
+    choice = input ? input.strip : 'q'
+
+    should_try_remerge = false
+
+    case choice
+    when '1'
+      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_base, file_ours)
+      should_try_remerge = true
+    when '2'
+      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_base, file_theirs)
+      should_try_remerge = true
+    when '3'
+      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_theirs, file_ours)
+      should_try_remerge = true
+    when '4'
+      should_try_remerge = true
+    when 'q'
+      return false
+    else
+      puts "Invalid choice."
+    end
+
+    next unless should_try_remerge
+
+    return true if remerge_from_files(file, file_ours, file_base, file_theirs, dry_run, false)
+
+    puts "\nStill conflicted. Keep editing or quit."
   end
 end
 
@@ -254,6 +310,7 @@ end
 def main
   json_output = ARGV.delete('--json')
   dry_run = ARGV.delete('--dry-run')
+  no_guided = ARGV.delete('--no-guided')
 
   if ARGV[0] == '--extract'
     file = ARGV[1]
@@ -261,7 +318,13 @@ def main
       puts("USAGE: #{File.basename __FILE__} --extract [--json] FILE")
       exit 0
     end
-    extract_conflict_files(file, json_output)
+    interactive_extract = !no_guided && STDIN.tty? && STDOUT.tty?
+    if interactive_extract
+      puts "Interactive mode: entering guided conflict resolution."
+      run_guided_resolution(file, dry_run)
+    else
+      extract_conflict_files(file, json_output)
+    end
     return
   end
 
@@ -293,8 +356,8 @@ def main
 
   file = ARGV.shift
   if !file || file == '--help' || file == '-h'
-    puts("USAGE: #{File.basename __FILE__} [--dry-run] [--json] FILE")
-    puts("       #{File.basename __FILE__} --extract [--json] FILE")
+    puts("USAGE: #{File.basename __FILE__} [--dry-run] [--json] [--no-guided] FILE")
+    puts("       #{File.basename __FILE__} --extract [--json] [--no-guided] FILE")
     puts("       #{File.basename __FILE__} [--json] [--dry-run] --remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
     puts("       #{File.basename __FILE__} --simulate FILE")
     puts("")
@@ -304,6 +367,7 @@ def main
     puts("--simulate: Check if conflict can be resolved cleanly")
     puts("--dry-run: Show what would happen without writing/staging")
     puts("--json: Emit machine-readable JSON output")
+    puts("--no-guided: Disable interactive extract mode")
     puts("")
     puts("JSON statuses for --remerge: applied, dry_run_clean, still_conflicted, error")
     exit 0
@@ -322,55 +386,7 @@ def main
 
   # Fall back to manual resolution workflow
   puts "\nProceeding with manual 3-way merge resolution..."
-
-  editor = get_git_editor
-
-  Dir.mktmpdir do |tmpdir|
-    file_theirs = File.join(tmpdir, 'theirs')
-    file_ours = File.join(tmpdir, 'ours')
-    file_base = File.join(tmpdir, 'base')
-
-    {
-      "3" => file_theirs,
-      "2" => file_ours,
-      "1" => file_base
-    }.each do |stage, output_path|
-      content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
-      unless status.success?
-        puts "Error: Failed to extract stage #{stage} for '#{file}'"
-        break
-      end
-      File.write(output_path, content)
-    end
-
-    loop do
-      puts "
-Choose a diff to view for '#{file}':"
-      puts "1. Theirs vs. Merged"
-      puts "2. Ours vs. Merged"
-      puts "3. Theirs vs. Ours"
-      puts "4. Re-merge with edited files (using 3-way merge-file)"
-      puts "q. Quit"
-      print "> "
-      input = STDIN.gets
-      choice = input ? input.strip : 'q'
-
-      case choice
-      when '1'
-        system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_theirs, file)
-      when '2'
-        system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_ours, file)
-      when '3'
-        system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_theirs, file_ours)
-      when '4'
-        remerge_from_files(file, file_ours, file_base, file_theirs, dry_run, json_output)
-      when 'q'
-        break
-      else
-        puts "Invalid choice."
-      end
-    end
-  end
+  run_guided_resolution(file, dry_run)
 end
 
 main

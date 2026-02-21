@@ -1,7 +1,11 @@
 """Regression tests for git-diff-123."""
 
 import json
+import os
+import pty
+import select
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -164,3 +168,51 @@ def test_remerge_json_reports_still_conflicted_status(tmp_path):
 
     payload = json.loads(remerge.stdout)
     assert payload["status"] == "still_conflicted"
+
+
+def test_extract_json_uses_guided_prompt_in_tty_session(tmp_path):
+    repo = init_conflicted_repo(tmp_path)
+    run(["git", "config", "core.editor", "true"], cwd=repo)
+
+    master_fd, slave_fd = pty.openpty()
+    proc = subprocess.Popen(
+        [str(SCRIPT_PATH), "--extract", "--json", "f.txt"],
+        cwd=repo,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+
+    output = b""
+    deadline = time.time() + 8
+    saw_prompt = False
+    while time.time() < deadline:
+        rlist, _, _ = select.select([master_fd], [], [], 0.2)
+        if rlist:
+            chunk = os.read(master_fd, 4096)
+            if not chunk:
+                break
+            output += chunk
+            if b"Choose a diff to view for 'f.txt'" in output:
+                saw_prompt = True
+                os.write(master_fd, b"q\n")
+                break
+        if proc.poll() is not None:
+            break
+
+    if saw_prompt:
+        # Drain remaining output so process can exit cleanly.
+        end_deadline = time.time() + 3
+        while time.time() < end_deadline and proc.poll() is None:
+            rlist, _, _ = select.select([master_fd], [], [], 0.2)
+            if rlist:
+                chunk = os.read(master_fd, 4096)
+                if not chunk:
+                    break
+                output += chunk
+    proc.wait(timeout=5)
+    os.close(master_fd)
+
+    assert b"Choose a diff to view for 'f.txt'" in output, output.decode("utf-8", errors="replace")

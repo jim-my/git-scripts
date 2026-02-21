@@ -172,17 +172,18 @@ git reup              # pull with rebase
 
 ### Conflict Resolution with `git-diff-123`
 ```bash
-# 1) In an active merge conflict, extract stage files
+# 1) In an active merge conflict, start guided mode (default in TTY)
 git diff-123 --extract --json path/to/conflicted_file
-# -> returns temp file paths for ours/base/theirs
-
-# 2) Edit ours/theirs temp files manually (keep base as reference)
-# 3) Re-merge edited files
-git diff-123 --remerge path/to/conflicted_file OURS_PATH BASE_PATH THEIRS_PATH
+# -> choose edit view, save changes, and the script auto-retries merge
+# -> if merge becomes clean, it applies and stages automatically
 ```
 
 JSON mode is available for tool integrations:
 ```bash
+# non-interactive JSON extract for tools
+git diff-123 --extract --json --no-guided path/to/conflicted_file
+
+# non-interactive JSON remerge
 git diff-123 --json --remerge path/to/conflicted_file OURS_PATH BASE_PATH THEIRS_PATH
 ```
 
