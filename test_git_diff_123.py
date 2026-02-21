@@ -215,4 +215,7 @@ def test_extract_json_uses_guided_prompt_in_tty_session(tmp_path):
     proc.wait(timeout=5)
     os.close(master_fd)
 
-    assert b"Choose a diff to view for 'f.txt'" in output, output.decode("utf-8", errors="replace")
+    decoded = output.decode("utf-8", errors="replace")
+    assert "Choose a diff to view for 'f.txt'" in decoded, decoded
+    assert "4. Retry without editing" in decoded, decoded
+    assert "4. Re-merge now" not in decoded, decoded

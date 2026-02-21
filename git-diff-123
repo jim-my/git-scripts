@@ -143,7 +143,7 @@ Choose a diff to view for '#{file}':"
     puts "1. Edit Ours vs Base (auto re-merge)"
     puts "2. Edit Theirs vs Base (auto re-merge)"
     puts "3. Edit Theirs vs Ours (auto re-merge)"
-    puts "4. Re-merge now"
+    puts "4. Retry without editing"
     puts "q. Quit"
     print "> "
     input = STDIN.gets
