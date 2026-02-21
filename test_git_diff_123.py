@@ -449,6 +449,7 @@ def test_find_does_not_leak_git_show_fatal_errors(tmp_path):
     result = run([str(SCRIPT_PATH), "--find"], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "fatal: path" not in result.stderr.lower()
+    assert "non_comparable(skipped)=" in result.stdout
 
 
 def test_commit_summary_json_includes_non_comparable_reason(tmp_path):
@@ -473,7 +474,7 @@ def test_commit_summary_text_groups_statuses_prettily(tmp_path):
     assert (
         "likely_clean:" in text
         or "likely_conflict:" in text
-        or "non_comparable:" in text
+        or "non_comparable(skipped):" in text
     )
-    assert "non_comparable" in text
-    assert "  - " in text
+    assert "non_comparable(skipped):" in text
+    assert "  - " in text or "  + " in text or "  ~ " in text

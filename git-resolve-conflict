@@ -8,6 +8,26 @@ require 'fileutils'
 require 'open3'
 require 'shellwords'
 
+def color_enabled?
+  STDOUT.tty? && ENV.fetch("TERM", "dumb") != "dumb" && ENV["NO_COLOR"].nil?
+end
+
+def colorize(text, code)
+  return text unless color_enabled?
+  "\e[#{code}m#{text}\e[0m"
+end
+
+def status_presentation(status)
+  case status
+  when "likely_conflict"
+    { label: "likely_conflict", marker: "+", color: 31 } # red
+  when "likely_clean"
+    { label: "likely_clean", marker: "-", color: 32 } # green
+  else
+    { label: "non_comparable(skipped)", marker: "~", color: 33 } # yellow
+  end
+end
+
 def get_git_editor
   editor = `git config core.editor`.strip
   editor.empty? ? 'vim' : editor
@@ -420,7 +440,10 @@ def find_merges(path_filter = nil, log_filters = [], json_output = false)
   puts "Merge conflict-likelihood scan (HEAD history):"
   results.each do |r|
     label = r["conflict_likely"] ? "likely_had_conflicts" : "likely_clean"
-    puts "#{r['commit'][0..11]}  #{label}  files_analyzed=#{r['files_analyzed']}  non_comparable=#{r['files_non_comparable']}"
+    marker = r["conflict_likely"] ? "+" : "-"
+    marker = colorize(marker, r["conflict_likely"] ? 31 : 32)
+    label = colorize(label, r["conflict_likely"] ? 31 : 32)
+    puts "#{marker} #{r['commit'][0..11]}  #{label}  files_analyzed=#{r['files_analyzed']}  non_comparable(skipped)=#{r['files_non_comparable']}"
   end
   true
 end
@@ -466,13 +489,19 @@ def find_merge_commit_files(commit, path_filter = nil, json_output = false)
   }
   results.each { |r| grouped[r["status"]] << r }
 
+  printed_any = false
   grouped.each do |status, entries|
     next if entries.empty?
-    puts "#{status}:"
+    style = status_presentation(status)
+    puts "" if printed_any
+    header = "#{style[:marker]} #{style[:label]}:"
+    puts colorize(header, style[:color])
     entries.each do |r|
+      item_marker = colorize(style[:marker], style[:color])
       detail = r["reason"] ? " (#{r['reason']})" : ""
-      puts "  - #{r['file']}#{detail}"
+      puts "  #{item_marker} #{r['file']}#{detail}"
     end
+    printed_any = true
   end
   true
 end
