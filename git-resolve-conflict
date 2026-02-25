@@ -82,6 +82,20 @@ def has_conflict_entries?(file)
   !output.strip.empty?
 end
 
+def conflict_stages_for_file(file)
+  output, status = Open3.capture2("git", "ls-files", "-u", "--", file)
+  return [] unless status.success?
+
+  stages = []
+  output.each_line do |line|
+    fields = line.split
+    next if fields.length < 4
+    stage = fields[2]
+    stages << stage if %w[1 2 3].include?(stage)
+  end
+  stages.uniq
+end
+
 def get_merge_base(ours, theirs)
   # Try octopus merge-base first for criss-cross merges
   base, status = Open3.capture2("git", "merge-base", "--octopus", ours, theirs)
@@ -159,18 +173,27 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
   file_theirs = File.join(tmpdir, 'theirs')
   file_ours = File.join(tmpdir, 'ours')
   file_base = File.join(tmpdir, 'base')
+  present_stages = conflict_stages_for_file(file)
 
   {
     "3" => file_theirs,
     "2" => file_ours,
     "1" => file_base
   }.each do |stage, output_path|
+    unless present_stages.include?(stage)
+      # Some valid conflicts (e.g., modify/delete, add/add) do not include every stage.
+      # Represent missing sides as empty files so comparison/remerge still works.
+      File.write(output_path, "")
+      next
+    end
+
     content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
     unless status.success?
       puts JSON.generate({error: "Failed to extract stage #{stage} for '#{file}'"}) if json_output
       puts "Error: Failed to extract stage #{stage} for '#{file}'" unless json_output
       exit 1
     end
+
     File.write(output_path, content)
   end
 
@@ -353,6 +376,16 @@ def audit_merge(file, commit, json_output = false)
     return false
   end
 
+  if fields.length > 3
+    msg = "Commit '#{commit}' has #{fields.length - 1} parents; audit mode only supports 2-parent merge commits."
+    if json_output
+      puts JSON.generate({ status: "error", message: msg })
+    else
+      puts "Error: #{msg}"
+    end
+    return false
+  end
+
   parent1 = fields[1]
   parent2 = fields[2]
   base = get_merge_base(parent1, parent2)
@@ -422,7 +455,7 @@ def get_merge_commit_parents(commit)
   return nil unless status.success?
   fields = parents_line.strip.split
   return nil if fields.length < 3
-  [fields[1], fields[2]]
+  fields[1..]
 end
 
 def changed_files_for_merge(commit, path_filter = nil)
@@ -436,6 +469,10 @@ end
 def conflict_likely_for_merge_file(commit, file)
   parents = get_merge_commit_parents(commit)
   return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "not_a_merge_commit" } unless parents
+  if parents.length != 2
+    return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "unsupported_multi_parent_merge" }
+  end
+
   parent1, parent2 = parents
   base = get_merge_base(parent1, parent2)
   if base.empty?
@@ -701,7 +738,7 @@ def main
     file = args[1]
     unless file
       puts("USAGE: #{File.basename __FILE__} --tool-extract FILE")
-      exit 0
+      exit 1
     end
     extract_conflict_files(file, true)
     return
@@ -711,7 +748,7 @@ def main
     file, ours_path, base_path, theirs_path = args[1], args[2], args[3], args[4]
     unless file && ours_path && base_path && theirs_path
       puts("USAGE: #{File.basename __FILE__} --tool-remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
-      exit 0
+      exit 1
     end
     success = remerge_from_files(file, ours_path, base_path, theirs_path, dry_run, true)
     exit(success ? 0 : 1)
@@ -723,7 +760,7 @@ def main
     if (commit_index = args.index('--commit'))
       if commit_index + 1 >= args.length || args[commit_index + 1].start_with?('--')
         puts("USAGE: #{File.basename __FILE__} --find [FILE] [--commit COMMIT] [--json] [-- <git-log-filters>]")
-        exit 0
+        exit 1
       end
       commit = args[commit_index + 1]
       args.slice!(commit_index, 2)
@@ -735,7 +772,7 @@ def main
         path_filter = args[0]
       else
         puts("USAGE: #{File.basename __FILE__} --find [FILE] [--commit COMMIT] [--json] [-- <git-log-filters>]")
-        exit 0
+        exit 1
       end
     end
 
@@ -760,7 +797,7 @@ def main
       file = commit_args[1]
     else
       puts("USAGE: #{File.basename __FILE__} --commit COMMIT [FILE] [--json]")
-      exit 0
+      exit 1
     end
     success = audit_merge(file, commit, json_output)
     exit(success ? 0 : 1)
@@ -794,7 +831,11 @@ def main
   end
 
   puts "Starting guided 3-way merge resolution..."
-  run_guided_resolution(file, dry_run)
+  success = run_guided_resolution(file, dry_run)
+  unless success
+    puts "Aborted without applying resolution."
+    exit 1
+  end
 end
 
 main

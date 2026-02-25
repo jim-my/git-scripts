@@ -53,6 +53,61 @@ def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
     return repo
 
 
+def init_modify_delete_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    repo = tmp_path / "repo_modify_delete_conflict"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    target = repo / file_path
+    target.write_text("line1\nline2\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    target.write_text("line1\nfeature update\n", encoding="utf-8")
+    run(["git", "commit", "-am", "feature modifies"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    run(["git", "rm", "-q", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "main deletes"], cwd=repo)
+
+    merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge_result.returncode != 0
+
+    return repo
+
+
+def init_add_add_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    repo = tmp_path / "repo_add_add_conflict"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "base.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / file_path).write_text("feature content\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "feature adds file"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / file_path).write_text("main content\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "main adds file"], cwd=repo)
+
+    merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge_result.returncode != 0
+
+    return repo
+
+
 def test_remerge_applies_clean_resolution_from_edited_files(tmp_path):
     repo = init_conflicted_repo(tmp_path)
 
@@ -137,6 +192,38 @@ def test_extract_handles_conflicted_file_paths_with_spaces(tmp_path):
     assert Path(files["ours"]).read_text(encoding="utf-8") == expected_ours
     assert Path(files["base"]).read_text(encoding="utf-8") == expected_base
     assert Path(files["theirs"]).read_text(encoding="utf-8") == expected_theirs
+
+
+def test_extract_handles_modify_delete_conflict_with_missing_ours_stage(tmp_path):
+    repo = init_modify_delete_conflict_repo(tmp_path)
+
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "f.txt"], cwd=repo, check=False)
+    assert extract.returncode == 0, extract.stdout + extract.stderr
+
+    files = json.loads(extract.stdout)
+    assert Path(files["ours"]).read_text(encoding="utf-8") == ""
+    assert Path(files["base"]).read_text(encoding="utf-8") == run(
+        ["git", "show", ":1:f.txt"], cwd=repo
+    ).stdout
+    assert Path(files["theirs"]).read_text(encoding="utf-8") == run(
+        ["git", "show", ":3:f.txt"], cwd=repo
+    ).stdout
+
+
+def test_extract_handles_add_add_conflict_with_missing_base_stage(tmp_path):
+    repo = init_add_add_conflict_repo(tmp_path)
+
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "f.txt"], cwd=repo, check=False)
+    assert extract.returncode == 0, extract.stdout + extract.stderr
+
+    files = json.loads(extract.stdout)
+    assert Path(files["base"]).read_text(encoding="utf-8") == ""
+    assert Path(files["ours"]).read_text(encoding="utf-8") == run(
+        ["git", "show", ":2:f.txt"], cwd=repo
+    ).stdout
+    assert Path(files["theirs"]).read_text(encoding="utf-8") == run(
+        ["git", "show", ":3:f.txt"], cwd=repo
+    ).stdout
 
 
 def test_remerge_json_reports_still_conflicted_status(tmp_path):
@@ -499,3 +586,86 @@ def test_no_color_overrides_color_always(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "\x1b[" not in result.stdout
+
+
+def init_repo_with_octopus_merge_commit(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_octopus_merge"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "base.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "b1"], cwd=repo)
+    (repo / "f1.txt").write_text("b1\n", encoding="utf-8")
+    run(["git", "add", "f1.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "b1"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    run(["git", "checkout", "-qb", "b2"], cwd=repo)
+    (repo / "f2.txt").write_text("b2\n", encoding="utf-8")
+    run(["git", "add", "f2.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "b2"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    run(["git", "checkout", "-qb", "b3"], cwd=repo)
+    (repo / "f3.txt").write_text("b3\n", encoding="utf-8")
+    run(["git", "add", "f3.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "b3"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    run(["git", "merge", "--no-ff", "-qm", "octopus merge", "b1", "b2", "b3"], cwd=repo)
+    return repo
+
+
+def test_find_commit_json_marks_octopus_merges_non_comparable(tmp_path):
+    repo = init_repo_with_octopus_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--find", "--commit", head, "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["files"], payload
+    assert all(entry["status"] == "non_comparable" for entry in payload["files"])
+    assert all(
+        entry["reason"] == "unsupported_multi_parent_merge"
+        for entry in payload["files"]
+    )
+
+
+def test_commit_file_audit_rejects_octopus_merge(tmp_path):
+    repo = init_repo_with_octopus_merge_commit(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--commit", head, "f1.txt", "--json"], cwd=repo, check=False)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert "only supports 2-parent merge commits" in payload["message"].lower()
+
+
+def test_find_missing_commit_value_exits_non_zero(tmp_path):
+    repo = init_repo_with_clean_merge_commit(tmp_path)
+    result = run([str(SCRIPT_PATH), "--find", "--commit"], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "USAGE:" in result.stdout
+
+
+def test_tool_extract_missing_file_arg_exits_non_zero(tmp_path):
+    repo = init_repo_with_clean_merge_commit(tmp_path)
+    result = run([str(SCRIPT_PATH), "--tool-extract"], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "USAGE:" in result.stdout
+
+
+def test_non_interactive_default_mode_exits_non_zero_when_not_resolved(tmp_path):
+    repo = init_conflicted_repo(tmp_path)
+    result = run([str(SCRIPT_PATH), "f.txt"], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "Aborted without applying resolution." in result.stdout
