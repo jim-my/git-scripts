@@ -25,6 +25,7 @@ INSTALL_DIR=""
 FORCE=false
 VERBOSE=false
 DRY_RUN=false
+OVERWRITE_EXISTING_DECISION="unset"
 
 # Script information
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,7 +41,7 @@ USAGE:
 OPTIONS:
     --method <method>     Installation method (auto|copy|symlink|path)
     --dir <directory>     Installation directory (default: auto-detect)
-    --force              Overwrite existing scripts
+    --force              Overwrite existing scripts without prompting
     --verbose            Show detailed output
     --dry-run            Show what would be done without executing
     --help               Show this help message
@@ -81,6 +82,42 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[✗]${NC} $*" >&2
+}
+
+confirm_overwrite_existing() {
+    local install_dir="$1"
+
+    if [[ "$FORCE" == true ]]; then
+        return 0
+    fi
+
+    if [[ "$OVERWRITE_EXISTING_DECISION" == "yes" ]]; then
+        return 0
+    fi
+
+    if [[ "$OVERWRITE_EXISTING_DECISION" == "no" ]]; then
+        return 1
+    fi
+
+    # Safe default for non-interactive environments.
+    if [[ ! -t 0 ]]; then
+        log_warning "Existing scripts detected in $install_dir; defaulting to no-overwrite in non-interactive mode"
+        OVERWRITE_EXISTING_DECISION="no"
+        return 1
+    fi
+
+    local answer
+    read -r -p "Some scripts already exist in $install_dir. Overwrite existing files? [y/N] " answer
+    case "$answer" in
+        y|Y|yes|YES)
+            OVERWRITE_EXISTING_DECISION="yes"
+            return 0
+            ;;
+        *)
+            OVERWRITE_EXISTING_DECISION="no"
+            return 1
+            ;;
+    esac
 }
 
 # Detect best installation directory
@@ -162,10 +199,12 @@ install_copy() {
         script_name="$(basename "$script")"
         local target="$install_dir/$script_name"
 
-        if [[ -f "$target" ]] && [[ "$FORCE" == false ]]; then
-            log_warning "Skipping $script_name (already exists, use --force to overwrite)"
-            ((skipped++))
-            continue
+        if [[ -e "$target" ]] && [[ "$FORCE" == false ]]; then
+            if ! confirm_overwrite_existing "$install_dir"; then
+                log_warning "Skipping $script_name (already exists)"
+                ((skipped++))
+                continue
+            fi
         fi
 
         if cp "$script" "$target"; then
@@ -213,13 +252,15 @@ install_symlink() {
         local target="$install_dir/$script_name"
 
         if [[ -e "$target" ]] && [[ "$FORCE" == false ]]; then
-            log_warning "Skipping $script_name (already exists, use --force to overwrite)"
-            ((skipped++))
-            continue
+            if ! confirm_overwrite_existing "$install_dir"; then
+                log_warning "Skipping $script_name (already exists)"
+                ((skipped++))
+                continue
+            fi
         fi
 
-        # Remove existing file/link if force is enabled
-        if [[ -e "$target" ]] && [[ "$FORCE" == true ]]; then
+        # Remove existing file/link if overwrite is approved.
+        if [[ -e "$target" ]]; then
             rm -f "$target"
         fi
 
