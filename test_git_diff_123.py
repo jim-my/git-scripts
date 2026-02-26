@@ -26,6 +26,7 @@ def run(cmd, cwd, check=True):
 
 
 def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Two-parent merge conflict on one file (classic content conflict)."""
     repo = tmp_path / "repo"
     repo.mkdir()
 
@@ -54,6 +55,7 @@ def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
 
 
 def init_modify_delete_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Merge conflict where one side modifies and the other deletes the same file."""
     repo = tmp_path / "repo_modify_delete_conflict"
     repo.mkdir()
 
@@ -81,6 +83,7 @@ def init_modify_delete_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -
 
 
 def init_add_add_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Merge conflict where both branches add the same path with different content."""
     repo = tmp_path / "repo_add_add_conflict"
     repo.mkdir()
 
@@ -310,6 +313,7 @@ def test_default_file_mode_uses_guided_prompt_in_tty_session(tmp_path):
 
 
 def init_repo_with_conflict_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit that required manual conflict resolution."""
     repo = tmp_path / "repo_conflict_merge"
     repo.mkdir()
 
@@ -339,6 +343,7 @@ def init_repo_with_conflict_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_add_add_conflict_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit from an add/add conflict with manual resolution."""
     repo = tmp_path / "repo_add_add_conflict_merge"
     repo.mkdir()
 
@@ -370,6 +375,7 @@ def init_repo_with_add_add_conflict_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_clean_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit that is cleanly auto-mergeable."""
     repo = tmp_path / "repo_clean_merge"
     repo.mkdir()
 
@@ -394,6 +400,7 @@ def init_repo_with_clean_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_add_delete_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit with non-comparable add/delete file paths."""
     repo = tmp_path / "repo_add_delete_merge"
     repo.mkdir()
 
@@ -420,6 +427,7 @@ def init_repo_with_add_delete_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_ongoing_merge_and_clean_file(tmp_path: Path) -> Path:
+    """In-progress merge with one conflicted file and one clean file."""
     repo = tmp_path / "repo_ongoing_merge_clean_file"
     repo.mkdir()
 
@@ -452,6 +460,7 @@ def init_repo_with_ongoing_merge_and_clean_file(tmp_path: Path) -> Path:
 
 
 def init_repo_with_cherry_pick_conflict_and_clean_file(tmp_path: Path) -> Path:
+    """In-progress cherry-pick with one conflicted file and one clean file."""
     repo = tmp_path / "repo_cherry_pick_clean_file"
     repo.mkdir()
 
@@ -483,6 +492,7 @@ def init_repo_with_cherry_pick_conflict_and_clean_file(tmp_path: Path) -> Path:
 
 
 def init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path: Path) -> Path:
+    """Cherry-pick conflict where earlier source-branch commits changed a clean file."""
     repo = tmp_path / "repo_cherry_pick_unrelated_clean"
     repo.mkdir()
 
@@ -778,6 +788,7 @@ def test_no_color_overrides_color_always(tmp_path):
 
 
 def init_repo_with_octopus_merge_commit(tmp_path: Path) -> Path:
+    """Completed octopus merge (3+ parents) for multi-parent handling tests."""
     repo = tmp_path / "repo_octopus_merge"
     repo.mkdir()
 
