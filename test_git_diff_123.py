@@ -773,3 +773,69 @@ def test_default_mode_can_target_file_named_help(tmp_path):
     assert result.returncode == 1
     assert "Starting guided 3-way merge resolution..." in result.stdout
     assert "USAGE:" not in result.stdout
+
+
+def test_default_mode_can_target_file_named_json_flag(tmp_path):
+    repo = tmp_path / "repo_json_filename"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    file_path = "--json"
+    (repo / file_path).write_text("base\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / file_path).write_text("feature\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "feature"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / file_path).write_text("main\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "main"], cwd=repo)
+
+    merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge_result.returncode != 0
+
+    result = run([str(SCRIPT_PATH), "--", file_path], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "Starting guided 3-way merge resolution..." in result.stdout
+    assert "USAGE:" not in result.stdout
+
+
+def test_default_mode_can_target_file_named_dry_run_flag(tmp_path):
+    repo = tmp_path / "repo_dry_run_filename"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    file_path = "--dry-run"
+    (repo / file_path).write_text("base\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / file_path).write_text("feature\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "feature"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / file_path).write_text("main\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "main"], cwd=repo)
+
+    merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge_result.returncode != 0
+
+    result = run([str(SCRIPT_PATH), "--", file_path], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "Starting guided 3-way merge resolution..." in result.stdout
+    assert "USAGE:" not in result.stdout
