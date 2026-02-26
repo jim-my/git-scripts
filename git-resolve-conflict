@@ -82,6 +82,39 @@ def has_conflict_entries?(file)
   !output.strip.empty?
 end
 
+def conflict_stages_for_file(file)
+  output, status = Open3.capture2("git", "ls-files", "-u", "--", file)
+  return [] unless status.success?
+
+  stages = []
+  output.each_line do |line|
+    fields = line.split
+    next if fields.length < 4
+    stage = fields[2]
+    stages << stage if %w[1 2 3].include?(stage)
+  end
+  stages.uniq
+end
+
+def rev_parse(ref)
+  out, _err, status = Open3.capture3("git", "rev-parse", "--verify", ref)
+  return nil unless status.success?
+  value = out.strip
+  value.empty? ? nil : value
+end
+
+def integration_head_ref
+  %w[MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD].each do |ref|
+    sha = rev_parse(ref)
+    return [ref, sha] unless sha.nil?
+  end
+  nil
+end
+
+def integration_in_progress?
+  !integration_head_ref.nil?
+end
+
 def get_merge_base(ours, theirs)
   # Try octopus merge-base first for criss-cross merges
   base, status = Open3.capture2("git", "merge-base", "--octopus", ours, theirs)
@@ -145,7 +178,8 @@ def review_resolved_vs_originals(resolved_path, original_ours, original_theirs, 
 end
 
 def extract_conflict_files(file, json_output = false, emit_output = true)
-  if check_merge_conflict(file)
+  has_conflict_stages = has_conflict_entries?(file)
+  if !has_conflict_stages && !integration_in_progress?
     error_msg = "'#{file}' is not in a merge conflict state."
     if json_output
       puts JSON.generate({error: error_msg})
@@ -159,19 +193,70 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
   file_theirs = File.join(tmpdir, 'theirs')
   file_ours = File.join(tmpdir, 'ours')
   file_base = File.join(tmpdir, 'base')
+  if has_conflict_stages
+    present_stages = conflict_stages_for_file(file)
 
-  {
-    "3" => file_theirs,
-    "2" => file_ours,
-    "1" => file_base
-  }.each do |stage, output_path|
-    content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
-    unless status.success?
-      puts JSON.generate({error: "Failed to extract stage #{stage} for '#{file}'"}) if json_output
-      puts "Error: Failed to extract stage #{stage} for '#{file}'" unless json_output
+    {
+      "3" => file_theirs,
+      "2" => file_ours,
+      "1" => file_base
+    }.each do |stage, output_path|
+      unless present_stages.include?(stage)
+        # Some valid conflicts (e.g., modify/delete, add/add) do not include every stage.
+        # Represent missing sides as empty files so comparison/remerge still works.
+        File.write(output_path, "")
+        next
+      end
+
+      content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
+      unless status.success?
+        puts JSON.generate({error: "Failed to extract stage #{stage} for '#{file}'"}) if json_output
+        puts "Error: Failed to extract stage #{stage} for '#{file}'" unless json_output
+        exit 1
+      end
+
+      File.write(output_path, content)
+    end
+  else
+    ours_rev = rev_parse("HEAD")
+    integration_ref = integration_head_ref
+    theirs_rev = integration_ref ? integration_ref[1] : nil
+    if ours_rev.nil? || theirs_rev.nil?
+      error_msg = "Could not determine active merge revisions for '#{file}'."
+      if json_output
+        puts JSON.generate({error: error_msg})
+      else
+        puts "Error: #{error_msg}"
+      end
       exit 1
     end
-    File.write(output_path, content)
+    base_rev = get_merge_base(ours_rev, theirs_rev)
+    if base_rev.empty?
+      error_msg = "Could not determine merge base for active merge."
+      if json_output
+        puts JSON.generate({error: error_msg})
+      else
+        puts "Error: #{error_msg}"
+      end
+      exit 1
+    end
+
+    ours_content = blob_content_at_revision(ours_rev, file)
+    base_content = blob_content_at_revision(base_rev, file)
+    theirs_content = blob_content_at_revision(theirs_rev, file)
+    if ours_content.nil? && base_content.nil? && theirs_content.nil?
+      error_msg = "File '#{file}' is not available in active merge revisions."
+      if json_output
+        puts JSON.generate({error: error_msg})
+      else
+        puts "Error: #{error_msg}"
+      end
+      exit 1
+    end
+
+    File.write(file_ours, ours_content.nil? ? "" : ours_content)
+    File.write(file_base, base_content.nil? ? "" : base_content)
+    File.write(file_theirs, theirs_content.nil? ? "" : theirs_content)
   end
 
   if emit_output
@@ -353,8 +438,18 @@ def audit_merge(file, commit, json_output = false)
     return false
   end
 
-  parent1 = fields[1]
-  parent2 = fields[2]
+  if fields.length > 3
+    msg = "Commit '#{commit}' has #{fields.length - 1} parents; audit mode only supports 2-parent merge commits."
+    if json_output
+      puts JSON.generate({ status: "error", message: msg })
+    else
+      puts "Error: #{msg}"
+    end
+    return false
+  end
+
+  parents = get_merge_commit_parents(commit)
+  parent1, parent2 = parents
   base = get_merge_base(parent1, parent2)
   if base.empty?
     msg = "Could not determine merge base for #{parent1[0..7]} and #{parent2[0..7]}"
@@ -366,17 +461,26 @@ def audit_merge(file, commit, json_output = false)
     return false
   end
 
+  analysis = conflict_likely_for_merge_file(commit, file)
+  if analysis["conflict_likely"].nil? && !(analysis["reason"] || "").start_with?("missing_in_")
+    msg = "Cannot determine conflict likelihood for '#{file}' (#{analysis['reason']})."
+    if json_output
+      puts JSON.generate({ status: "error", message: msg })
+    else
+      puts "Error: #{msg}"
+    end
+    return false
+  end
+  conflict_likely = analysis["conflict_likely"].nil? ? false : analysis["conflict_likely"]
+
   tmpdir = Dir.mktmpdir("git-resolve-conflict-audit-")
   resolved_path = File.join(tmpdir, "resolved")
   ours_path = File.join(tmpdir, "original_ours")
   theirs_path = File.join(tmpdir, "original_theirs")
   base_path = File.join(tmpdir, "original_base")
 
-  unless extract_file_at_revision(commit, file, resolved_path) &&
-         extract_file_at_revision(parent1, file, ours_path) &&
-         extract_file_at_revision(parent2, file, theirs_path) &&
-         extract_file_at_revision(base, file, base_path)
-    msg = "File '#{file}' not available at one or more required revisions."
+  unless extract_file_at_revision(commit, file, resolved_path)
+    msg = "File '#{file}' not available at merge commit '#{commit}'."
     if json_output
       puts JSON.generate({ status: "error", message: msg })
     else
@@ -385,10 +489,12 @@ def audit_merge(file, commit, json_output = false)
     return false
   end
 
-  _merged_content, _merge_stderr, merge_status = Open3.capture3(
-    "git", "merge-file", "-p", ours_path, base_path, theirs_path
-  )
-  conflict_likely = merge_status.exitstatus == 1
+  ours_content = blob_content_at_revision(parent1, file)
+  theirs_content = blob_content_at_revision(parent2, file)
+  base_content = blob_content_at_revision(base, file)
+  File.write(ours_path, ours_content.nil? ? "" : ours_content)
+  File.write(theirs_path, theirs_content.nil? ? "" : theirs_content)
+  File.write(base_path, base_content.nil? ? "" : base_content)
 
   if json_output
     puts JSON.generate({
@@ -396,6 +502,7 @@ def audit_merge(file, commit, json_output = false)
       commit: commit,
       file: file,
       conflict_likely: conflict_likely,
+      reason: analysis["reason"],
       resolved: resolved_path,
       original_ours: ours_path,
       original_theirs: theirs_path,
@@ -404,7 +511,7 @@ def audit_merge(file, commit, json_output = false)
     return true
   end
 
-  puts "Audit merge commit #{commit[0..7]} for '#{file}':"
+  puts "Audit merge commit #{commit[0..7]} for '#{file}' (#{analysis['reason']}):"
   puts "Parent1 (ours): #{parent1[0..7]}"
   puts "Parent2 (theirs): #{parent2[0..7]}"
   puts "Base: #{base[0..7]}"
@@ -422,7 +529,7 @@ def get_merge_commit_parents(commit)
   return nil unless status.success?
   fields = parents_line.strip.split
   return nil if fields.length < 3
-  [fields[1], fields[2]]
+  fields[1..]
 end
 
 def changed_files_for_merge(commit, path_filter = nil)
@@ -436,6 +543,10 @@ end
 def conflict_likely_for_merge_file(commit, file)
   parents = get_merge_commit_parents(commit)
   return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "not_a_merge_commit" } unless parents
+  if parents.length != 2
+    return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "unsupported_multi_parent_merge" }
+  end
+
   parent1, parent2 = parents
   base = get_merge_base(parent1, parent2)
   if base.empty?
@@ -508,7 +619,7 @@ def build_find_log_command(log_filters, path_filter = nil)
 end
 
 def find_merges(path_filter = nil, log_filters = [], json_output = false)
-  output, status = Open3.capture2(*build_find_log_command(log_filters, path_filter))
+  output, _stderr, status = Open3.capture3(*build_find_log_command(log_filters, path_filter))
   unless status.success?
     msg = "Failed to list merge commits from current branch."
     if json_output
@@ -527,7 +638,7 @@ def find_merges(path_filter = nil, log_filters = [], json_output = false)
     analyzed = analyses.count { |a| !a["conflict_likely"].nil? }
     likely_conflicts = analyses.count { |a| a["conflict_likely"] == true }
     non_comparable = analyses.count { |a| a["status"] == "non_comparable" }
-    conflict_likely = likely_conflicts > 0
+    conflict_likely = analyzed > 0 ? (likely_conflicts > 0) : nil
     results << {
       "commit" => commit,
       "conflict_likely" => conflict_likely,
@@ -548,10 +659,16 @@ def find_merges(path_filter = nil, log_filters = [], json_output = false)
 
   puts "Merge conflict-likelihood scan (HEAD history):"
   results.each do |r|
-    label = r["conflict_likely"] ? "likely_had_conflicts" : "likely_clean"
-    marker = r["conflict_likely"] ? "+" : "-"
-    marker = colorize(marker, r["conflict_likely"] ? 31 : 32)
-    label = colorize(label, r["conflict_likely"] ? 31 : 32)
+    if r["conflict_likely"].nil?
+      label = "status_unknown(non_comparable_only)"
+      marker = colorize("~", 33)
+      label = colorize(label, 33)
+    else
+      label = r["conflict_likely"] ? "likely_had_conflicts" : "likely_clean"
+      marker = r["conflict_likely"] ? "+" : "-"
+      marker = colorize(marker, r["conflict_likely"] ? 31 : 32)
+      label = colorize(label, r["conflict_likely"] ? 31 : 32)
+    end
     puts "#{marker} #{r['commit'][0..11]}  #{label}  files_analyzed=#{r['files_analyzed']}  non_comparable(skipped)=#{r['files_non_comparable']}"
   end
   true
@@ -687,21 +804,17 @@ end
 
 def main
   args = ARGV.dup
+  literal_path_mode = (args[0] == "--")
   parse_color_mode!(args)
-  log_filters = []
-  if (sep_index = args.index("--"))
-    log_filters = args[(sep_index + 1)..] || []
-    args = args[0...sep_index]
-  end
 
-  json_output = args.delete('--json')
-  dry_run = args.delete('--dry-run')
+  json_output = !literal_path_mode && args.delete('--json')
+  dry_run = !literal_path_mode && args.delete('--dry-run')
 
   if args[0] == '--tool-extract'
     file = args[1]
     unless file
       puts("USAGE: #{File.basename __FILE__} --tool-extract FILE")
-      exit 0
+      exit 1
     end
     extract_conflict_files(file, true)
     return
@@ -711,19 +824,25 @@ def main
     file, ours_path, base_path, theirs_path = args[1], args[2], args[3], args[4]
     unless file && ours_path && base_path && theirs_path
       puts("USAGE: #{File.basename __FILE__} --tool-remerge FILE OURS_PATH BASE_PATH THEIRS_PATH")
-      exit 0
+      exit 1
     end
     success = remerge_from_files(file, ours_path, base_path, theirs_path, dry_run, true)
     exit(success ? 0 : 1)
   end
 
   if args.include?('--find')
+    log_filters = []
+    if (sep_index = args.index("--"))
+      log_filters = args[(sep_index + 1)..] || []
+      args = args[0...sep_index]
+    end
+
     args.delete('--find')
     commit = nil
     if (commit_index = args.index('--commit'))
       if commit_index + 1 >= args.length || args[commit_index + 1].start_with?('--')
         puts("USAGE: #{File.basename __FILE__} --find [FILE] [--commit COMMIT] [--json] [-- <git-log-filters>]")
-        exit 0
+        exit 1
       end
       commit = args[commit_index + 1]
       args.slice!(commit_index, 2)
@@ -735,7 +854,7 @@ def main
         path_filter = args[0]
       else
         puts("USAGE: #{File.basename __FILE__} --find [FILE] [--commit COMMIT] [--json] [-- <git-log-filters>]")
-        exit 0
+        exit 1
       end
     end
 
@@ -760,14 +879,15 @@ def main
       file = commit_args[1]
     else
       puts("USAGE: #{File.basename __FILE__} --commit COMMIT [FILE] [--json]")
-      exit 0
+      exit 1
     end
     success = audit_merge(file, commit, json_output)
     exit(success ? 0 : 1)
   end
 
-  file = args.shift
-  if !file || file == '--help' || file == '-h'
+  args.shift if literal_path_mode
+
+  if args.empty? || (!literal_path_mode && args.length == 1 && (args[0] == '--help' || args[0] == '-h'))
     puts("USAGE: #{File.basename __FILE__} [--dry-run] [--color MODE|--no-color] FILE")
     puts("       #{File.basename __FILE__} [--color MODE|--no-color] --commit COMMIT [FILE] [--json]")
     puts("       #{File.basename __FILE__} [--color MODE|--no-color] --find [FILE] [--commit COMMIT] [--json] [-- <git-log-filters>]")
@@ -782,19 +902,24 @@ def main
     puts("--no-color: Disable colored output")
     exit 0
   end
+  file = args.shift
 
   if !File.exist?(file) && !has_conflict_entries?(file)
     puts "Error: '#{file}' not found in working tree and not in conflict index."
     exit 1
   end
 
-  if check_merge_conflict(file)
+  if check_merge_conflict(file) && !integration_in_progress?
     puts "Error: '#{file}' is not in a merge conflict state."
     exit 1
   end
 
   puts "Starting guided 3-way merge resolution..."
-  run_guided_resolution(file, dry_run)
+  success = run_guided_resolution(file, dry_run)
+  unless success
+    puts "Aborted without applying resolution."
+    exit 1
+  end
 end
 
 main

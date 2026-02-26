@@ -172,14 +172,18 @@ git reup              # pull with rebase
 
 ### Conflict Resolution with `git-resolve-conflict`
 ```bash
-# 1) In an active merge conflict, start guided mode
-git resolve-conflict path/to/conflicted_file
+# 1) In an active conflict/integration flow, start guided mode
+git resolve-conflict path/to/file
 # -> choose edit view, save changes, and the script auto-retries merge
 # -> if merge becomes clean, it applies and stages automatically
 
 # dry-run mode: check retry outcomes without writing/staging resolved output
-git resolve-conflict --dry-run path/to/conflicted_file
+git resolve-conflict --dry-run path/to/file
 ```
+
+Guided mode works for:
+- unmerged index entries (normal merge conflict files)
+- clean files during an in-progress integration flow (`merge`, `cherry-pick`, `revert`, `rebase`)
 
 JSON mode is available for tool integrations:
 ```bash
@@ -196,7 +200,13 @@ git resolve-conflict --find path/to/file -- --since='2025-01-01'
 `--commit ... --json` fields:
 - `status` - `ok` or `error`
 - `conflict_likely` - `true` if replaying original ours/base/theirs suggests textual conflict
+- `reason` - reason code for analysis outcome (for example `merge_file_conflict`, `both_added_different_content`, `missing_in_*`)
 - `resolved`, `original_ours`, `original_theirs`, `original_base` - temp file paths for direct diff review
+
+`--find` status semantics:
+- `likely_had_conflicts` - at least one analyzed file looked conflict-prone
+- `likely_clean` - analyzed files looked clean
+- `status_unknown(non_comparable_only)` - no files were analyzable for that merge commit
 
 
 ### Historical Analysis
