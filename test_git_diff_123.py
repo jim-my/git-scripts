@@ -433,6 +433,10 @@ def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["conflict_likely"] is True
+    assert Path(payload["resolved"]).exists()
+    assert Path(payload["original_ours"]).exists()
+    assert Path(payload["original_theirs"]).exists()
+    assert Path(payload["original_base"]).exists()
 
 
 def test_audit_merge_json_reports_conflict_likely_false(tmp_path):
@@ -465,6 +469,8 @@ def test_audit_merge_json_handles_add_add_conflict_case(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["conflict_likely"] is True
+    assert Path(payload["original_base"]).exists()
+    assert Path(payload["original_base"]).read_text(encoding="utf-8") == ""
 
 
 def test_commit_alias_runs_merge_audit(tmp_path):
@@ -734,3 +740,36 @@ def test_non_interactive_default_mode_exits_non_zero_when_not_resolved(tmp_path)
     result = run([str(SCRIPT_PATH), "f.txt"], cwd=repo, check=False)
     assert result.returncode == 1
     assert "Aborted without applying resolution." in result.stdout
+
+
+def test_default_mode_can_target_file_named_help(tmp_path):
+    repo = tmp_path / "repo_help_filename"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    file_path = "--help"
+    (repo / file_path).write_text("base\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / file_path).write_text("feature\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "feature"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / file_path).write_text("main\n", encoding="utf-8")
+    run(["git", "add", "--", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "main"], cwd=repo)
+
+    merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge_result.returncode != 0
+
+    result = run([str(SCRIPT_PATH), "--", file_path], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "Starting guided 3-way merge resolution..." in result.stdout
+    assert "USAGE:" not in result.stdout
