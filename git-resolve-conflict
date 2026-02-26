@@ -96,6 +96,18 @@ def conflict_stages_for_file(file)
   stages.uniq
 end
 
+def merge_in_progress?
+  _out, _err, status = Open3.capture3("git", "rev-parse", "--verify", "MERGE_HEAD")
+  status.success?
+end
+
+def rev_parse(ref)
+  out, _err, status = Open3.capture3("git", "rev-parse", "--verify", ref)
+  return nil unless status.success?
+  value = out.strip
+  value.empty? ? nil : value
+end
+
 def get_merge_base(ours, theirs)
   # Try octopus merge-base first for criss-cross merges
   base, status = Open3.capture2("git", "merge-base", "--octopus", ours, theirs)
@@ -159,7 +171,8 @@ def review_resolved_vs_originals(resolved_path, original_ours, original_theirs, 
 end
 
 def extract_conflict_files(file, json_output = false, emit_output = true)
-  if check_merge_conflict(file)
+  has_conflict_stages = has_conflict_entries?(file)
+  if !has_conflict_stages && !merge_in_progress?
     error_msg = "'#{file}' is not in a merge conflict state."
     if json_output
       puts JSON.generate({error: error_msg})
@@ -173,28 +186,69 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
   file_theirs = File.join(tmpdir, 'theirs')
   file_ours = File.join(tmpdir, 'ours')
   file_base = File.join(tmpdir, 'base')
-  present_stages = conflict_stages_for_file(file)
+  if has_conflict_stages
+    present_stages = conflict_stages_for_file(file)
 
-  {
-    "3" => file_theirs,
-    "2" => file_ours,
-    "1" => file_base
-  }.each do |stage, output_path|
-    unless present_stages.include?(stage)
-      # Some valid conflicts (e.g., modify/delete, add/add) do not include every stage.
-      # Represent missing sides as empty files so comparison/remerge still works.
-      File.write(output_path, "")
-      next
+    {
+      "3" => file_theirs,
+      "2" => file_ours,
+      "1" => file_base
+    }.each do |stage, output_path|
+      unless present_stages.include?(stage)
+        # Some valid conflicts (e.g., modify/delete, add/add) do not include every stage.
+        # Represent missing sides as empty files so comparison/remerge still works.
+        File.write(output_path, "")
+        next
+      end
+
+      content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
+      unless status.success?
+        puts JSON.generate({error: "Failed to extract stage #{stage} for '#{file}'"}) if json_output
+        puts "Error: Failed to extract stage #{stage} for '#{file}'" unless json_output
+        exit 1
+      end
+
+      File.write(output_path, content)
     end
-
-    content, status = Open3.capture2("git", "show", ":#{stage}:#{file}")
-    unless status.success?
-      puts JSON.generate({error: "Failed to extract stage #{stage} for '#{file}'"}) if json_output
-      puts "Error: Failed to extract stage #{stage} for '#{file}'" unless json_output
+  else
+    ours_rev = rev_parse("HEAD")
+    theirs_rev = rev_parse("MERGE_HEAD")
+    if ours_rev.nil? || theirs_rev.nil?
+      error_msg = "Could not determine active merge revisions for '#{file}'."
+      if json_output
+        puts JSON.generate({error: error_msg})
+      else
+        puts "Error: #{error_msg}"
+      end
+      exit 1
+    end
+    base_rev = get_merge_base(ours_rev, theirs_rev)
+    if base_rev.empty?
+      error_msg = "Could not determine merge base for active merge."
+      if json_output
+        puts JSON.generate({error: error_msg})
+      else
+        puts "Error: #{error_msg}"
+      end
       exit 1
     end
 
-    File.write(output_path, content)
+    ours_content = blob_content_at_revision(ours_rev, file)
+    base_content = blob_content_at_revision(base_rev, file)
+    theirs_content = blob_content_at_revision(theirs_rev, file)
+    if ours_content.nil? && base_content.nil? && theirs_content.nil?
+      error_msg = "File '#{file}' is not available in active merge revisions."
+      if json_output
+        puts JSON.generate({error: error_msg})
+      else
+        puts "Error: #{error_msg}"
+      end
+      exit 1
+    end
+
+    File.write(file_ours, ours_content.nil? ? "" : ours_content)
+    File.write(file_base, base_content.nil? ? "" : base_content)
+    File.write(file_theirs, theirs_content.nil? ? "" : theirs_content)
   end
 
   if emit_output
@@ -846,7 +900,7 @@ def main
     exit 1
   end
 
-  if check_merge_conflict(file)
+  if check_merge_conflict(file) && !merge_in_progress?
     puts "Error: '#{file}' is not in a merge conflict state."
     exit 1
   end

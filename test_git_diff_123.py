@@ -419,6 +419,38 @@ def init_repo_with_add_delete_merge_commit(tmp_path: Path) -> Path:
     return repo
 
 
+def init_repo_with_ongoing_merge_and_clean_file(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_ongoing_merge_clean_file"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "clean.txt").write_text("line1\nline2\n", encoding="utf-8")
+    (repo / "conflict.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "clean.txt", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "clean.txt").write_text("line1\nline2\nfeature_tail\n", encoding="utf-8")
+    (repo / "conflict.txt").write_text("feature_version\n", encoding="utf-8")
+    run(["git", "add", "clean.txt", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature changes"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "clean.txt").write_text("main_head\nline1\nline2\n", encoding="utf-8")
+    (repo / "conflict.txt").write_text("main_version\n", encoding="utf-8")
+    run(["git", "add", "clean.txt", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main changes"], cwd=repo)
+
+    merge = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge.returncode != 0
+
+    return repo
+
+
 def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     repo = init_repo_with_conflict_merge_commit(tmp_path)
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -740,6 +772,14 @@ def test_non_interactive_default_mode_exits_non_zero_when_not_resolved(tmp_path)
     result = run([str(SCRIPT_PATH), "f.txt"], cwd=repo, check=False)
     assert result.returncode == 1
     assert "Aborted without applying resolution." in result.stdout
+
+
+def test_default_mode_allows_clean_file_during_active_merge(tmp_path):
+    repo = init_repo_with_ongoing_merge_and_clean_file(tmp_path)
+    result = run([str(SCRIPT_PATH), "clean.txt"], cwd=repo, check=False)
+    assert result.returncode == 1
+    assert "not in a merge conflict state" not in result.stdout
+    assert "Starting guided 3-way merge resolution..." in result.stdout
 
 
 def test_default_mode_can_target_file_named_help(tmp_path):
