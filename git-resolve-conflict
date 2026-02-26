@@ -115,6 +115,17 @@ def integration_in_progress?
   !integration_head_ref.nil?
 end
 
+def integration_base_revision(ours_rev, integration_ref_name, theirs_rev)
+  case integration_ref_name
+  when "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"
+    # These flows replay a single commit. Use the picked commit's first parent as base
+    # so unrelated earlier branch history is not pulled into "theirs".
+    base = rev_parse("#{theirs_rev}^1")
+    return base unless base.nil? || base.empty?
+  end
+  get_merge_base(ours_rev, theirs_rev)
+end
+
 def get_merge_base(ours, theirs)
   # Try octopus merge-base first for criss-cross merges
   base, status = Open3.capture2("git", "merge-base", "--octopus", ours, theirs)
@@ -220,6 +231,7 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
   else
     ours_rev = rev_parse("HEAD")
     integration_ref = integration_head_ref
+    integration_ref_name = integration_ref ? integration_ref[0] : nil
     theirs_rev = integration_ref ? integration_ref[1] : nil
     if ours_rev.nil? || theirs_rev.nil?
       error_msg = "Could not determine active merge revisions for '#{file}'."
@@ -230,7 +242,7 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
       end
       exit 1
     end
-    base_rev = get_merge_base(ours_rev, theirs_rev)
+    base_rev = integration_base_revision(ours_rev, integration_ref_name, theirs_rev)
     if base_rev.empty?
       error_msg = "Could not determine merge base for active merge."
       if json_output

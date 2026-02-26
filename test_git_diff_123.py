@@ -482,6 +482,40 @@ def init_repo_with_cherry_pick_conflict_and_clean_file(tmp_path: Path) -> Path:
     return repo
 
 
+def init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_cherry_pick_unrelated_clean"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "clean.txt").write_text("base_clean\n", encoding="utf-8")
+    (repo / "conflict.txt").write_text("base_conflict\n", encoding="utf-8")
+    run(["git", "add", "clean.txt", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "clean.txt").write_text("feature_clean\n", encoding="utf-8")
+    run(["git", "add", "clean.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature clean change"], cwd=repo)
+
+    (repo / "conflict.txt").write_text("feature_conflict\n", encoding="utf-8")
+    run(["git", "add", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature conflict change"], cwd=repo)
+    picked_commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "conflict.txt").write_text("main_conflict\n", encoding="utf-8")
+    run(["git", "add", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main conflict change"], cwd=repo)
+
+    cp = run(["git", "cherry-pick", picked_commit], cwd=repo, check=False)
+    assert cp.returncode != 0
+    return repo
+
+
 def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     repo = init_repo_with_conflict_merge_commit(tmp_path)
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -840,6 +874,31 @@ def test_default_mode_allows_clean_file_during_active_cherry_pick(tmp_path):
     assert result.returncode == 1
     assert "not in a merge conflict state" not in result.stdout
     assert "Starting guided 3-way merge resolution..." in result.stdout
+
+
+def test_cherry_pick_clean_file_extract_ignores_unrelated_earlier_branch_changes(tmp_path):
+    repo = init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path)
+    before_clean = (repo / "clean.txt").read_text(encoding="utf-8")
+
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "clean.txt"], cwd=repo)
+    files = json.loads(extract.stdout)
+
+    remerge = run(
+        [
+            str(SCRIPT_PATH),
+            "--tool-remerge",
+            "clean.txt",
+            files["ours"],
+            files["base"],
+            files["theirs"],
+        ],
+        cwd=repo,
+        check=False,
+    )
+    assert remerge.returncode == 0, remerge.stdout + remerge.stderr
+    assert (repo / "clean.txt").read_text(encoding="utf-8") == before_clean
+    staged = run(["git", "diff", "--cached", "--name-only"], cwd=repo).stdout.splitlines()
+    assert "clean.txt" not in staged
 
 
 def test_default_mode_can_target_file_named_help(tmp_path):
