@@ -338,6 +338,37 @@ def init_repo_with_conflict_merge_commit(tmp_path: Path) -> Path:
     return repo
 
 
+def init_repo_with_add_add_conflict_merge_commit(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_add_add_conflict_merge"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "root.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "root.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "f.txt").write_text("feature version\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature adds"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "f.txt").write_text("main version\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main adds"], cwd=repo)
+
+    merge = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge.returncode != 0
+    (repo / "f.txt").write_text("resolved\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "resolve add/add"], cwd=repo)
+    return repo
+
+
 def init_repo_with_clean_merge_commit(tmp_path: Path) -> Path:
     repo = tmp_path / "repo_clean_merge"
     repo.mkdir()
@@ -418,6 +449,22 @@ def test_audit_merge_json_reports_conflict_likely_false(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["conflict_likely"] is False
+
+
+def test_audit_merge_json_handles_add_add_conflict_case(tmp_path):
+    repo = init_repo_with_add_add_conflict_merge_commit(tmp_path)
+    commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run(
+        [str(SCRIPT_PATH), "--commit", commit, "f.txt", "--json"],
+        cwd=repo,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["conflict_likely"] is True
 
 
 def test_commit_alias_runs_merge_audit(tmp_path):
@@ -540,6 +587,16 @@ def test_find_does_not_leak_git_show_fatal_errors(tmp_path):
     assert "non_comparable(skipped)=" in result.stdout
 
 
+def test_find_json_does_not_leak_git_errors_to_stderr_outside_repo(tmp_path):
+    workdir = tmp_path / "outside_repo"
+    workdir.mkdir()
+    result = run([str(SCRIPT_PATH), "--find", "--json"], cwd=workdir, check=False)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert result.stderr.strip() == ""
+
+
 def test_commit_summary_json_includes_non_comparable_reason(tmp_path):
     repo = init_repo_with_add_delete_merge_commit(tmp_path)
     head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -566,6 +623,14 @@ def test_commit_summary_text_groups_statuses_prettily(tmp_path):
     )
     assert "non_comparable(skipped):" in text
     assert "  - " in text or "  + " in text or "  ~ " in text
+
+
+def test_find_text_marks_unknown_when_no_files_are_analyzable(tmp_path):
+    repo = init_repo_with_add_delete_merge_commit(tmp_path)
+    result = run([str(SCRIPT_PATH), "--find"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "status_unknown(non_comparable_only)" in result.stdout
+    assert "likely_clean" not in result.stdout
 
 
 def test_color_always_adds_ansi_sequences_in_text_mode(tmp_path):

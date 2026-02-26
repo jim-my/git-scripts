@@ -386,11 +386,9 @@ def audit_merge(file, commit, json_output = false)
     return false
   end
 
-  parent1 = fields[1]
-  parent2 = fields[2]
-  base = get_merge_base(parent1, parent2)
-  if base.empty?
-    msg = "Could not determine merge base for #{parent1[0..7]} and #{parent2[0..7]}"
+  analysis = conflict_likely_for_merge_file(commit, file)
+  if analysis["conflict_likely"].nil?
+    msg = "Cannot determine conflict likelihood for '#{file}' (#{analysis['reason']})."
     if json_output
       puts JSON.generate({ status: "error", message: msg })
     else
@@ -398,55 +396,25 @@ def audit_merge(file, commit, json_output = false)
     end
     return false
   end
-
-  tmpdir = Dir.mktmpdir("git-resolve-conflict-audit-")
-  resolved_path = File.join(tmpdir, "resolved")
-  ours_path = File.join(tmpdir, "original_ours")
-  theirs_path = File.join(tmpdir, "original_theirs")
-  base_path = File.join(tmpdir, "original_base")
-
-  unless extract_file_at_revision(commit, file, resolved_path) &&
-         extract_file_at_revision(parent1, file, ours_path) &&
-         extract_file_at_revision(parent2, file, theirs_path) &&
-         extract_file_at_revision(base, file, base_path)
-    msg = "File '#{file}' not available at one or more required revisions."
-    if json_output
-      puts JSON.generate({ status: "error", message: msg })
-    else
-      puts "Error: #{msg}"
-    end
-    return false
-  end
-
-  _merged_content, _merge_stderr, merge_status = Open3.capture3(
-    "git", "merge-file", "-p", ours_path, base_path, theirs_path
-  )
-  conflict_likely = merge_status.exitstatus == 1
+  conflict_likely = analysis["conflict_likely"]
 
   if json_output
-    puts JSON.generate({
-      status: "ok",
-      commit: commit,
-      file: file,
-      conflict_likely: conflict_likely,
-      resolved: resolved_path,
-      original_ours: ours_path,
-      original_theirs: theirs_path,
-      original_base: base_path
-    })
+    puts JSON.generate({ status: "ok", commit: commit, file: file, conflict_likely: conflict_likely })
     return true
   end
 
-  puts "Audit merge commit #{commit[0..7]} for '#{file}':"
-  puts "Parent1 (ours): #{parent1[0..7]}"
-  puts "Parent2 (theirs): #{parent2[0..7]}"
-  puts "Base: #{base[0..7]}"
+  parents = get_merge_commit_parents(commit)
+  parent1, parent2 = parents
+  base = get_merge_base(parent1, parent2)
+  puts "Audit merge commit #{commit[0..7]} for '#{file}' (#{analysis['reason']}):"
+  puts "Parent1 (ours): #{parent1 ? parent1[0..7] : 'unknown'}"
+  puts "Parent2 (theirs): #{parent2 ? parent2[0..7] : 'unknown'}"
+  puts "Base: #{base.empty? ? 'unknown' : base[0..7]}"
   if conflict_likely
     puts "Conflict likelihood: likely (manual resolution risk worth reviewing)"
   else
     puts "Conflict likelihood: low (clean auto-merge likely)"
   end
-  review_resolved_vs_originals(resolved_path, ours_path, theirs_path, base_path, "resolved@#{commit[0..7]}")
   true
 end
 
@@ -545,7 +513,7 @@ def build_find_log_command(log_filters, path_filter = nil)
 end
 
 def find_merges(path_filter = nil, log_filters = [], json_output = false)
-  output, status = Open3.capture2(*build_find_log_command(log_filters, path_filter))
+  output, _stderr, status = Open3.capture3(*build_find_log_command(log_filters, path_filter))
   unless status.success?
     msg = "Failed to list merge commits from current branch."
     if json_output
@@ -564,7 +532,7 @@ def find_merges(path_filter = nil, log_filters = [], json_output = false)
     analyzed = analyses.count { |a| !a["conflict_likely"].nil? }
     likely_conflicts = analyses.count { |a| a["conflict_likely"] == true }
     non_comparable = analyses.count { |a| a["status"] == "non_comparable" }
-    conflict_likely = likely_conflicts > 0
+    conflict_likely = analyzed > 0 ? (likely_conflicts > 0) : nil
     results << {
       "commit" => commit,
       "conflict_likely" => conflict_likely,
@@ -585,10 +553,16 @@ def find_merges(path_filter = nil, log_filters = [], json_output = false)
 
   puts "Merge conflict-likelihood scan (HEAD history):"
   results.each do |r|
-    label = r["conflict_likely"] ? "likely_had_conflicts" : "likely_clean"
-    marker = r["conflict_likely"] ? "+" : "-"
-    marker = colorize(marker, r["conflict_likely"] ? 31 : 32)
-    label = colorize(label, r["conflict_likely"] ? 31 : 32)
+    if r["conflict_likely"].nil?
+      label = "status_unknown(non_comparable_only)"
+      marker = colorize("~", 33)
+      label = colorize(label, 33)
+    else
+      label = r["conflict_likely"] ? "likely_had_conflicts" : "likely_clean"
+      marker = r["conflict_likely"] ? "+" : "-"
+      marker = colorize(marker, r["conflict_likely"] ? 31 : 32)
+      label = colorize(label, r["conflict_likely"] ? 31 : 32)
+    end
     puts "#{marker} #{r['commit'][0..11]}  #{label}  files_analyzed=#{r['files_analyzed']}  non_comparable(skipped)=#{r['files_non_comparable']}"
   end
   true
