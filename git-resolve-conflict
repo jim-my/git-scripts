@@ -603,7 +603,7 @@ def conflict_likely_for_merge_file(commit, file)
     end
 
     _out, _err, status = Open3.capture3("git", "merge-file", "-p", ours_path, base_path, theirs_path)
-    if status.exitstatus == 1
+    if status.exitstatus && status.exitstatus > 0
       return { "conflict_likely" => true, "status" => "likely_conflict", "reason" => "merge_file_conflict" }
     end
     if status.exitstatus == 0
@@ -787,7 +787,7 @@ def remerge_from_files(file, ours_path, base_path, theirs_path, dry_run = false,
     return true
   end
 
-  if status.exitstatus == 1
+  if status.exitstatus && status.exitstatus > 0
     if json_output
       puts JSON.generate({
         status: "still_conflicted",

@@ -54,6 +54,36 @@ def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
     return repo
 
 
+def init_multi_hunk_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Merge conflict with at least two independent conflict hunks."""
+    repo = tmp_path / "repo_multi_hunk_conflict"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    target = repo / file_path
+    target.write_text("A\nkeep1\nB\nkeep2\nC\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    target.write_text("A\nours1\nB\nours2\nC\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "feature edits"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    target.write_text("A\ntheirs1\nB\ntheirs2\nC\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "main edits"], cwd=repo)
+
+    merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge_result.returncode != 0
+    return repo
+
+
 def init_modify_delete_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
     """Merge conflict where one side modifies and the other deletes the same file."""
     repo = tmp_path / "repo_modify_delete_conflict"
@@ -256,6 +286,34 @@ def test_remerge_json_reports_still_conflicted_status(tmp_path):
     )
     assert remerge.returncode == 1
 
+    payload = json.loads(remerge.stdout)
+    assert payload["status"] == "still_conflicted"
+
+
+def test_remerge_json_reports_still_conflicted_for_multi_hunk_conflicts(tmp_path):
+    repo = init_multi_hunk_conflicted_repo(tmp_path)
+
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "f.txt"], cwd=repo)
+    files = json.loads(extract.stdout)
+
+    Path(files["ours"]).write_text("A\nmanual ours1\nB\nmanual ours2\nC\n", encoding="utf-8")
+    Path(files["theirs"]).write_text(
+        "A\nmanual theirs1\nB\nmanual theirs2\nC\n", encoding="utf-8"
+    )
+
+    remerge = run(
+        [
+            str(SCRIPT_PATH),
+            "--tool-remerge",
+            "f.txt",
+            files["ours"],
+            files["base"],
+            files["theirs"],
+        ],
+        cwd=repo,
+        check=False,
+    )
+    assert remerge.returncode == 1
     payload = json.loads(remerge.stdout)
     assert payload["status"] == "still_conflicted"
 
@@ -642,6 +700,21 @@ def test_find_commit_json_lists_file_conflict_likelihood(tmp_path):
     files = {entry["file"]: entry for entry in payload["files"]}
     assert "f.txt" in files
     assert files["f.txt"]["conflict_likely"] is True
+
+
+def test_find_commit_json_handles_multi_hunk_merge_file_conflicts(tmp_path):
+    repo = init_multi_hunk_conflicted_repo(tmp_path)
+    (repo / "f.txt").write_text("A\nresolved1\nB\nresolved2\nC\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "manual merge resolution"], cwd=repo)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--find", "--commit", head, "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    files = {entry["file"]: entry for entry in payload["files"]}
+    assert files["f.txt"]["conflict_likely"] is True
+    assert files["f.txt"]["reason"] == "merge_file_conflict"
 
 
 def test_find_supports_git_log_filter_passthrough(tmp_path):
