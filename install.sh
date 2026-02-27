@@ -26,6 +26,7 @@ FORCE=false
 VERBOSE=false
 DRY_RUN=false
 OVERWRITE_EXISTING_DECISION="unset"
+FORCE_MODE_SET=false
 
 # Script information
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,7 +42,9 @@ USAGE:
 OPTIONS:
     --method <method>     Installation method (auto|copy|symlink|path)
     --dir <directory>     Installation directory (default: auto-detect)
-    --force              Overwrite existing scripts without prompting
+    --force <yes|no>     Overwrite policy when target exists
+                         yes: always overwrite (non-interactive)
+                         no: never overwrite (non-interactive)
     --verbose            Show detailed output
     --dry-run            Show what would be done without executing
     --help               Show this help message
@@ -57,7 +60,8 @@ EXAMPLES:
     ./install.sh --method copy             # Copy to ~/.local/bin
     ./install.sh --dir /usr/local/bin      # Install to system directory
     ./install.sh --dry-run --verbose       # Preview installation
-    ./install.sh --force                   # Overwrite existing files
+    ./install.sh --force yes               # Overwrite existing files
+    ./install.sh --force no                # Never overwrite existing files
 
 EOF
     exit 1
@@ -87,8 +91,12 @@ log_error() {
 confirm_overwrite_existing() {
     local install_dir="$1"
 
-    if [[ "$FORCE" == true ]]; then
+    if [[ "$FORCE_MODE_SET" == true ]] && [[ "$FORCE" == true ]]; then
         return 0
+    fi
+
+    if [[ "$FORCE_MODE_SET" == true ]] && [[ "$FORCE" == false ]]; then
+        return 1
     fi
 
     if [[ "$OVERWRITE_EXISTING_DECISION" == "yes" ]]; then
@@ -99,11 +107,11 @@ confirm_overwrite_existing() {
         return 1
     fi
 
-    # Safe default for non-interactive environments.
+    # Require explicit non-interactive policy for batch/script usage.
     if [[ ! -t 0 ]]; then
-        log_warning "Existing scripts detected in $install_dir; defaulting to no-overwrite in non-interactive mode"
-        OVERWRITE_EXISTING_DECISION="no"
-        return 1
+        log_error "Existing scripts detected in $install_dir but no prompt is available."
+        log_error "Use --force yes or --force no for non-interactive runs."
+        return 2
     fi
 
     local answer
@@ -200,7 +208,12 @@ install_copy() {
         local target="$install_dir/$script_name"
 
         if [[ -e "$target" ]] && [[ "$FORCE" == false ]]; then
-            if ! confirm_overwrite_existing "$install_dir"; then
+            local overwrite_rc=0
+            confirm_overwrite_existing "$install_dir" || overwrite_rc=$?
+            if [[ "$overwrite_rc" -eq 2 ]]; then
+                exit 1
+            fi
+            if [[ "$overwrite_rc" -ne 0 ]]; then
                 log_warning "Skipping $script_name (already exists)"
                 ((skipped++))
                 continue
@@ -252,7 +265,12 @@ install_symlink() {
         local target="$install_dir/$script_name"
 
         if [[ -e "$target" ]] && [[ "$FORCE" == false ]]; then
-            if ! confirm_overwrite_existing "$install_dir"; then
+            local overwrite_rc=0
+            confirm_overwrite_existing "$install_dir" || overwrite_rc=$?
+            if [[ "$overwrite_rc" -eq 2 ]]; then
+                exit 1
+            fi
+            if [[ "$overwrite_rc" -ne 0 ]]; then
                 log_warning "Skipping $script_name (already exists)"
                 ((skipped++))
                 continue
@@ -390,7 +408,41 @@ parse_arguments() {
                 INSTALL_DIR="$1"
                 ;;
             --force)
-                FORCE=true
+                shift
+                if [[ $# -eq 0 ]]; then
+                    log_error "--force requires a value: yes or no"
+                    usage
+                fi
+                case "$1" in
+                    y|Y|yes|YES|true|TRUE|1)
+                        FORCE=true
+                        FORCE_MODE_SET=true
+                        ;;
+                    n|N|no|NO|false|FALSE|0)
+                        FORCE=false
+                        FORCE_MODE_SET=true
+                        ;;
+                    *)
+                        log_error "Invalid value for --force: $1 (use yes|no)"
+                        usage
+                        ;;
+                esac
+                ;;
+            --force=*)
+                case "${1#--force=}" in
+                    y|Y|yes|YES|true|TRUE|1)
+                        FORCE=true
+                        FORCE_MODE_SET=true
+                        ;;
+                    n|N|no|NO|false|FALSE|0)
+                        FORCE=false
+                        FORCE_MODE_SET=true
+                        ;;
+                    *)
+                        log_error "Invalid value for --force: ${1#--force=} (use yes|no)"
+                        usage
+                        ;;
+                esac
                 ;;
             --verbose)
                 VERBOSE=true
@@ -419,6 +471,7 @@ parse_arguments() {
             usage
             ;;
     esac
+
 }
 
 # Main installation function
