@@ -584,6 +584,36 @@ def init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path: Pa
     return repo
 
 
+def init_repo_with_revert_conflict_and_clean_file(tmp_path: Path) -> Path:
+    """In-progress revert where one file reverts cleanly while another conflicts."""
+    repo = tmp_path / "repo_revert_clean_file"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "clean.txt").write_text("base_clean\n", encoding="utf-8")
+    (repo / "conflict.txt").write_text("base_conflict\n", encoding="utf-8")
+    run(["git", "add", "clean.txt", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    (repo / "clean.txt").write_text("changed_clean\n", encoding="utf-8")
+    (repo / "conflict.txt").write_text("changed_conflict\n", encoding="utf-8")
+    run(["git", "add", "clean.txt", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "target"], cwd=repo)
+    revert_commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    (repo / "conflict.txt").write_text("later_conflict\n", encoding="utf-8")
+    run(["git", "add", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "later conflict change"], cwd=repo)
+
+    revert_result = run(["git", "revert", revert_commit], cwd=repo, check=False)
+    assert revert_result.returncode != 0
+    return repo
+
+
 def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     repo = init_repo_with_conflict_merge_commit(tmp_path)
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -984,6 +1014,17 @@ def test_cherry_pick_clean_file_extract_ignores_unrelated_earlier_branch_changes
     assert (repo / "clean.txt").read_text(encoding="utf-8") == before_clean
     staged = run(["git", "diff", "--cached", "--name-only"], cwd=repo).stdout.splitlines()
     assert "clean.txt" not in staged
+
+
+def test_revert_clean_file_extract_models_reverse_patch_direction(tmp_path):
+    repo = init_repo_with_revert_conflict_and_clean_file(tmp_path)
+
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "clean.txt"], cwd=repo)
+    files = json.loads(extract.stdout)
+
+    assert Path(files["ours"]).read_text(encoding="utf-8") == "changed_clean\n"
+    assert Path(files["base"]).read_text(encoding="utf-8") == "changed_clean\n"
+    assert Path(files["theirs"]).read_text(encoding="utf-8") == "base_clean\n"
 
 
 def test_default_mode_can_target_file_named_help(tmp_path):
