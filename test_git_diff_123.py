@@ -966,6 +966,7 @@ def test_cherry_pick_clean_file_extract_ignores_unrelated_earlier_branch_changes
 
     extract = run([str(SCRIPT_PATH), "--tool-extract", "clean.txt"], cwd=repo)
     files = json.loads(extract.stdout)
+    assert Path(files["base"]).read_text(encoding="utf-8") == "feature_clean\n"
 
     remerge = run(
         [

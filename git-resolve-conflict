@@ -115,11 +115,14 @@ def integration_in_progress?
   !integration_head_ref.nil?
 end
 
+# Returns a non-nil String (SHA or "") so callers may use .empty? safely.
 def integration_base_revision(ours_rev, integration_ref_name, theirs_rev)
   case integration_ref_name
   when "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"
     # These flows replay a single commit. Use the picked commit's first parent as base
     # so unrelated earlier branch history is not pulled into "theirs".
+    # NOTE: for rebase of merge commits (REBASE_HEAD with 2+ parents), ^1 is a best-effort
+    # approximation of replay base.
     base = rev_parse("#{theirs_rev}^1")
     return base unless base.nil? || base.empty?
   end
