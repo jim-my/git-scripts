@@ -26,6 +26,7 @@ def run(cmd, cwd, check=True):
 
 
 def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Two-parent merge conflict on one file (classic content conflict)."""
     repo = tmp_path / "repo"
     repo.mkdir()
 
@@ -53,7 +54,38 @@ def init_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
     return repo
 
 
+def init_multi_hunk_conflicted_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Merge conflict with at least two independent conflict hunks."""
+    repo = tmp_path / "repo_multi_hunk_conflict"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    target = repo / file_path
+    target.write_text("A\nkeep1\nB\nkeep2\nC\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    target.write_text("A\nours1\nB\nours2\nC\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "feature edits"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    target.write_text("A\ntheirs1\nB\ntheirs2\nC\n", encoding="utf-8")
+    run(["git", "add", file_path], cwd=repo)
+    run(["git", "commit", "-qm", "main edits"], cwd=repo)
+
+    merge_result = run(["git", "merge", "feature"], cwd=repo, check=False)
+    assert merge_result.returncode != 0
+    return repo
+
+
 def init_modify_delete_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Merge conflict where one side modifies and the other deletes the same file."""
     repo = tmp_path / "repo_modify_delete_conflict"
     repo.mkdir()
 
@@ -81,6 +113,7 @@ def init_modify_delete_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -
 
 
 def init_add_add_conflict_repo(tmp_path: Path, file_path: str = "f.txt") -> Path:
+    """Merge conflict where both branches add the same path with different content."""
     repo = tmp_path / "repo_add_add_conflict"
     repo.mkdir()
 
@@ -257,6 +290,34 @@ def test_remerge_json_reports_still_conflicted_status(tmp_path):
     assert payload["status"] == "still_conflicted"
 
 
+def test_remerge_json_reports_still_conflicted_for_multi_hunk_conflicts(tmp_path):
+    repo = init_multi_hunk_conflicted_repo(tmp_path)
+
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "f.txt"], cwd=repo)
+    files = json.loads(extract.stdout)
+
+    Path(files["ours"]).write_text("A\nmanual ours1\nB\nmanual ours2\nC\n", encoding="utf-8")
+    Path(files["theirs"]).write_text(
+        "A\nmanual theirs1\nB\nmanual theirs2\nC\n", encoding="utf-8"
+    )
+
+    remerge = run(
+        [
+            str(SCRIPT_PATH),
+            "--tool-remerge",
+            "f.txt",
+            files["ours"],
+            files["base"],
+            files["theirs"],
+        ],
+        cwd=repo,
+        check=False,
+    )
+    assert remerge.returncode == 1
+    payload = json.loads(remerge.stdout)
+    assert payload["status"] == "still_conflicted"
+
+
 def test_default_file_mode_uses_guided_prompt_in_tty_session(tmp_path):
     repo = init_conflicted_repo(tmp_path)
     run(["git", "config", "core.editor", "true"], cwd=repo)
@@ -310,6 +371,7 @@ def test_default_file_mode_uses_guided_prompt_in_tty_session(tmp_path):
 
 
 def init_repo_with_conflict_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit that required manual conflict resolution."""
     repo = tmp_path / "repo_conflict_merge"
     repo.mkdir()
 
@@ -339,6 +401,7 @@ def init_repo_with_conflict_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_add_add_conflict_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit from an add/add conflict with manual resolution."""
     repo = tmp_path / "repo_add_add_conflict_merge"
     repo.mkdir()
 
@@ -370,6 +433,7 @@ def init_repo_with_add_add_conflict_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_clean_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit that is cleanly auto-mergeable."""
     repo = tmp_path / "repo_clean_merge"
     repo.mkdir()
 
@@ -394,6 +458,7 @@ def init_repo_with_clean_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_add_delete_merge_commit(tmp_path: Path) -> Path:
+    """Completed merge commit with non-comparable add/delete file paths."""
     repo = tmp_path / "repo_add_delete_merge"
     repo.mkdir()
 
@@ -420,6 +485,7 @@ def init_repo_with_add_delete_merge_commit(tmp_path: Path) -> Path:
 
 
 def init_repo_with_ongoing_merge_and_clean_file(tmp_path: Path) -> Path:
+    """In-progress merge with one conflicted file and one clean file."""
     repo = tmp_path / "repo_ongoing_merge_clean_file"
     repo.mkdir()
 
@@ -452,6 +518,7 @@ def init_repo_with_ongoing_merge_and_clean_file(tmp_path: Path) -> Path:
 
 
 def init_repo_with_cherry_pick_conflict_and_clean_file(tmp_path: Path) -> Path:
+    """In-progress cherry-pick with one conflicted file and one clean file."""
     repo = tmp_path / "repo_cherry_pick_clean_file"
     repo.mkdir()
 
@@ -478,6 +545,41 @@ def init_repo_with_cherry_pick_conflict_and_clean_file(tmp_path: Path) -> Path:
     run(["git", "commit", "-qm", "main conflict change"], cwd=repo)
 
     cp = run(["git", "cherry-pick", feature_commit], cwd=repo, check=False)
+    assert cp.returncode != 0
+    return repo
+
+
+def init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path: Path) -> Path:
+    """Cherry-pick conflict where earlier source-branch commits changed a clean file."""
+    repo = tmp_path / "repo_cherry_pick_unrelated_clean"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "clean.txt").write_text("base_clean\n", encoding="utf-8")
+    (repo / "conflict.txt").write_text("base_conflict\n", encoding="utf-8")
+    run(["git", "add", "clean.txt", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "clean.txt").write_text("feature_clean\n", encoding="utf-8")
+    run(["git", "add", "clean.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature clean change"], cwd=repo)
+
+    (repo / "conflict.txt").write_text("feature_conflict\n", encoding="utf-8")
+    run(["git", "add", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature conflict change"], cwd=repo)
+    picked_commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "conflict.txt").write_text("main_conflict\n", encoding="utf-8")
+    run(["git", "add", "conflict.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main conflict change"], cwd=repo)
+
+    cp = run(["git", "cherry-pick", picked_commit], cwd=repo, check=False)
     assert cp.returncode != 0
     return repo
 
@@ -598,6 +700,21 @@ def test_find_commit_json_lists_file_conflict_likelihood(tmp_path):
     files = {entry["file"]: entry for entry in payload["files"]}
     assert "f.txt" in files
     assert files["f.txt"]["conflict_likely"] is True
+
+
+def test_find_commit_json_handles_multi_hunk_merge_file_conflicts(tmp_path):
+    repo = init_multi_hunk_conflicted_repo(tmp_path)
+    (repo / "f.txt").write_text("A\nresolved1\nB\nresolved2\nC\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "manual merge resolution"], cwd=repo)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--find", "--commit", head, "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    files = {entry["file"]: entry for entry in payload["files"]}
+    assert files["f.txt"]["conflict_likely"] is True
+    assert files["f.txt"]["reason"] == "merge_file_conflict"
 
 
 def test_find_supports_git_log_filter_passthrough(tmp_path):
@@ -744,6 +861,7 @@ def test_no_color_overrides_color_always(tmp_path):
 
 
 def init_repo_with_octopus_merge_commit(tmp_path: Path) -> Path:
+    """Completed octopus merge (3+ parents) for multi-parent handling tests."""
     repo = tmp_path / "repo_octopus_merge"
     repo.mkdir()
 
@@ -840,6 +958,32 @@ def test_default_mode_allows_clean_file_during_active_cherry_pick(tmp_path):
     assert result.returncode == 1
     assert "not in a merge conflict state" not in result.stdout
     assert "Starting guided 3-way merge resolution..." in result.stdout
+
+
+def test_cherry_pick_clean_file_extract_ignores_unrelated_earlier_branch_changes(tmp_path):
+    repo = init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path)
+    before_clean = (repo / "clean.txt").read_text(encoding="utf-8")
+
+    extract = run([str(SCRIPT_PATH), "--tool-extract", "clean.txt"], cwd=repo)
+    files = json.loads(extract.stdout)
+    assert Path(files["base"]).read_text(encoding="utf-8") == "feature_clean\n"
+
+    remerge = run(
+        [
+            str(SCRIPT_PATH),
+            "--tool-remerge",
+            "clean.txt",
+            files["ours"],
+            files["base"],
+            files["theirs"],
+        ],
+        cwd=repo,
+        check=False,
+    )
+    assert remerge.returncode == 0, remerge.stdout + remerge.stderr
+    assert (repo / "clean.txt").read_text(encoding="utf-8") == before_clean
+    staged = run(["git", "diff", "--cached", "--name-only"], cwd=repo).stdout.splitlines()
+    assert "clean.txt" not in staged
 
 
 def test_default_mode_can_target_file_named_help(tmp_path):

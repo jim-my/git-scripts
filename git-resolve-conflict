@@ -115,6 +115,20 @@ def integration_in_progress?
   !integration_head_ref.nil?
 end
 
+# Returns a non-nil String (SHA or "") so callers may use .empty? safely.
+def integration_base_revision(ours_rev, integration_ref_name, theirs_rev)
+  case integration_ref_name
+  when "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"
+    # These flows replay a single commit. Use the picked commit's first parent as base
+    # so unrelated earlier branch history is not pulled into "theirs".
+    # NOTE: for rebase of merge commits (REBASE_HEAD with 2+ parents), ^1 is a best-effort
+    # approximation of replay base.
+    base = rev_parse("#{theirs_rev}^1")
+    return base unless base.nil? || base.empty?
+  end
+  get_merge_base(ours_rev, theirs_rev)
+end
+
 def get_merge_base(ours, theirs)
   # Try octopus merge-base first for criss-cross merges
   base, status = Open3.capture2("git", "merge-base", "--octopus", ours, theirs)
@@ -220,6 +234,7 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
   else
     ours_rev = rev_parse("HEAD")
     integration_ref = integration_head_ref
+    integration_ref_name = integration_ref ? integration_ref[0] : nil
     theirs_rev = integration_ref ? integration_ref[1] : nil
     if ours_rev.nil? || theirs_rev.nil?
       error_msg = "Could not determine active merge revisions for '#{file}'."
@@ -230,7 +245,7 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
       end
       exit 1
     end
-    base_rev = get_merge_base(ours_rev, theirs_rev)
+    base_rev = integration_base_revision(ours_rev, integration_ref_name, theirs_rev)
     if base_rev.empty?
       error_msg = "Could not determine merge base for active merge."
       if json_output
@@ -591,7 +606,7 @@ def conflict_likely_for_merge_file(commit, file)
     end
 
     _out, _err, status = Open3.capture3("git", "merge-file", "-p", ours_path, base_path, theirs_path)
-    if status.exitstatus == 1
+    if status.exitstatus && status.exitstatus > 0
       return { "conflict_likely" => true, "status" => "likely_conflict", "reason" => "merge_file_conflict" }
     end
     if status.exitstatus == 0
@@ -775,7 +790,7 @@ def remerge_from_files(file, ours_path, base_path, theirs_path, dry_run = false,
     return true
   end
 
-  if status.exitstatus == 1
+  if status.exitstatus && status.exitstatus > 0
     if json_output
       puts JSON.generate({
         status: "still_conflicted",
