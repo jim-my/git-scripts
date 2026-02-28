@@ -118,13 +118,16 @@ end
 # Returns a non-nil String (SHA or "") so callers may use .empty? safely.
 def integration_base_revision(ours_rev, integration_ref_name, theirs_rev)
   case integration_ref_name
-  when "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"
+  when "CHERRY_PICK_HEAD", "REBASE_HEAD"
     # These flows replay a single commit. Use the picked commit's first parent as base
     # so unrelated earlier branch history is not pulled into "theirs".
     # NOTE: for rebase of merge commits (REBASE_HEAD with 2+ parents), ^1 is a best-effort
     # approximation of replay base.
     base = rev_parse("#{theirs_rev}^1")
     return base unless base.nil? || base.empty?
+  when "REVERT_HEAD"
+    # Revert applies a commit in reverse, so the reverted commit itself is the base side.
+    return theirs_rev
   end
   get_merge_base(ours_rev, theirs_rev)
 end
@@ -259,6 +262,11 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
     ours_content = blob_content_at_revision(ours_rev, file)
     base_content = blob_content_at_revision(base_rev, file)
     theirs_content = blob_content_at_revision(theirs_rev, file)
+    if integration_ref_name == "REVERT_HEAD"
+      # Model revert as reversing the target commit: base is the target commit tree,
+      # and "theirs" is its first parent.
+      theirs_content = blob_content_at_revision("#{theirs_rev}^1", file)
+    end
     if ours_content.nil? && base_content.nil? && theirs_content.nil?
       error_msg = "File '#{file}' is not available in active merge revisions."
       if json_output
