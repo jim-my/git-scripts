@@ -190,11 +190,6 @@ def blob_content_at_revision(rev, file)
   content
 end
 
-def file_exists_at_revision?(rev, file)
-  _out, _err, status = Open3.capture3("git", "cat-file", "-e", "#{rev}:#{file}")
-  status.success?
-end
-
 def file_diff_identical?(left, right)
   system("git", "diff", "--no-index", "--quiet", "--", left, right)
   $?.success?

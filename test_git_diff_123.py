@@ -775,7 +775,7 @@ def test_find_commit_json_handles_multi_hunk_merge_file_conflicts(tmp_path):
     payload = json.loads(result.stdout)
     files = {entry["file"]: entry for entry in payload["files"]}
     assert files["f.txt"]["conflict_likely"] is True
-    assert files["f.txt"]["reason"] == "merge_file_conflict"
+    assert files["f.txt"]["reason"] == "merge_tree_conflict"
 
 
 def test_find_supports_git_log_filter_passthrough(tmp_path):
@@ -831,7 +831,7 @@ def test_find_does_not_leak_git_show_fatal_errors(tmp_path):
     result = run([str(SCRIPT_PATH), "--find"], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "fatal: path" not in result.stderr.lower()
-    assert "non_comparable(skipped)=" in result.stdout
+    assert "likely_clean" in result.stdout
 
 
 def test_find_json_does_not_leak_git_errors_to_stderr_outside_repo(tmp_path):
@@ -844,7 +844,7 @@ def test_find_json_does_not_leak_git_errors_to_stderr_outside_repo(tmp_path):
     assert result.stderr.strip() == ""
 
 
-def test_commit_summary_json_includes_non_comparable_reason(tmp_path):
+def test_commit_summary_json_reports_add_delete_files_as_clean(tmp_path):
     repo = init_repo_with_add_delete_merge_commit(tmp_path)
     head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
 
@@ -852,8 +852,9 @@ def test_commit_summary_json_includes_non_comparable_reason(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
+    # Files added by only one side (add/delete) are cleanly resolved by git merge-tree
     reasons = {entry.get("reason") for entry in payload["files"]}
-    assert any(reason and reason.startswith("missing_in_") for reason in reasons)
+    assert reasons == {"merge_tree_clean"}
 
 
 def test_audit_merge_allows_missing_side_file_for_review(tmp_path):
@@ -870,7 +871,7 @@ def test_audit_merge_allows_missing_side_file_for_review(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["conflict_likely"] is False
-    assert payload["reason"] == "missing_in_theirs_base"
+    assert payload["reason"] == "merge_tree_clean"
     assert Path(payload["resolved"]).exists()
     assert Path(payload["original_ours"]).read_text(encoding="utf-8") == "main only\n"
     assert Path(payload["original_base"]).read_text(encoding="utf-8") == ""
@@ -884,21 +885,15 @@ def test_commit_summary_text_groups_statuses_prettily(tmp_path):
     result = run([str(SCRIPT_PATH), "--commit", head], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     text = result.stdout
-    assert (
-        "likely_clean:" in text
-        or "likely_conflict:" in text
-        or "non_comparable(skipped):" in text
-    )
-    assert "non_comparable(skipped):" in text
+    assert "likely_clean:" in text
     assert "  - " in text or "  + " in text or "  ~ " in text
 
 
-def test_find_text_marks_unknown_when_no_files_are_analyzable(tmp_path):
+def test_find_text_marks_clean_for_add_delete_merge(tmp_path):
     repo = init_repo_with_add_delete_merge_commit(tmp_path)
     result = run([str(SCRIPT_PATH), "--find"], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "status_unknown(non_comparable_only)" in result.stdout
-    assert "likely_clean" not in result.stdout
+    assert "likely_clean" in result.stdout
 
 
 def test_color_always_adds_ansi_sequences_in_text_mode(tmp_path):
