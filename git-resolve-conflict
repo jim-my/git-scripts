@@ -168,7 +168,11 @@ def merge_tree_conflicts_for_commit(parent1, parent2, base)
            when 0
              Set.new
            when 1
-             # stdout: line 1 = tree SHA, lines 2..blank = conflicting filenames
+             # stdout with --name-only on conflict (Git >= 2.38):
+             #   line 0: <tree-sha>
+             #   lines 1..N-1: conflicting filenames (one per line)
+             #   line N: blank line (separator before diagnostic messages)
+             # take_while stops at the blank so diagnostic lines are not collected.
              lines = out.lines.map(&:chomp)
              filenames = lines.drop(1).take_while { |l| !l.empty? }
              Set.new(filenames)
@@ -519,7 +523,7 @@ def audit_merge(file, commit, json_output = false)
   end
 
   analysis = conflict_likely_for_merge_file(commit, file)
-  if analysis["conflict_likely"].nil? && !(analysis["reason"] || "").start_with?("missing_in_")
+  if analysis["conflict_likely"].nil?
     msg = "Cannot determine conflict likelihood for '#{file}' (#{analysis['reason']})."
     if json_output
       puts JSON.generate({ status: "error", message: msg })
@@ -610,53 +614,16 @@ def conflict_likely_for_merge_file(commit, file)
     return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "missing_merge_base" }
   end
 
-  exists_ours = file_exists_at_revision?(parent1, file)
-  exists_theirs = file_exists_at_revision?(parent2, file)
-  exists_base = file_exists_at_revision?(base, file)
-
-  unless exists_ours && exists_theirs && exists_base
-    if !exists_base && exists_ours && exists_theirs
-      ours_content = blob_content_at_revision(parent1, file)
-      theirs_content = blob_content_at_revision(parent2, file)
-      same_add = !ours_content.nil? && ours_content == theirs_content
-      if same_add
-        return { "conflict_likely" => false, "status" => "likely_clean", "reason" => "both_added_same_content" }
-      end
-      return { "conflict_likely" => true, "status" => "likely_conflict", "reason" => "both_added_different_content" }
-    end
-
-    missing = []
-    missing << "ours" unless exists_ours
-    missing << "theirs" unless exists_theirs
-    missing << "base" unless exists_base
-    return {
-      "conflict_likely" => nil,
-      "status" => "non_comparable",
-      "reason" => "missing_in_#{missing.join('_')}"
-    }
+  conflict_set = merge_tree_conflicts_for_commit(parent1, parent2, base)
+  if conflict_set.nil?
+    return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "merge_tree_error" }
   end
 
-  Dir.mktmpdir("git-resolve-conflict-find-") do |tmpdir|
-    ours_path = File.join(tmpdir, "ours")
-    theirs_path = File.join(tmpdir, "theirs")
-    base_path = File.join(tmpdir, "base")
-
-    unless extract_file_at_revision(parent1, file, ours_path) &&
-           extract_file_at_revision(parent2, file, theirs_path) &&
-           extract_file_at_revision(base, file, base_path)
-      return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "extract_failed" }
-    end
-
-    _out, _err, status = Open3.capture3("git", "merge-file", "-p", ours_path, base_path, theirs_path)
-    if status.exitstatus && status.exitstatus > 0
-      return { "conflict_likely" => true, "status" => "likely_conflict", "reason" => "merge_file_conflict" }
-    end
-    if status.exitstatus == 0
-      return { "conflict_likely" => false, "status" => "likely_clean", "reason" => "merge_file_clean" }
-    end
+  if conflict_set.include?(file)
+    { "conflict_likely" => true, "status" => "likely_conflict", "reason" => "merge_tree_conflict" }
+  else
+    { "conflict_likely" => false, "status" => "likely_clean", "reason" => "merge_tree_clean" }
   end
-
-  { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "merge_file_error" }
 end
 
 def build_find_log_command(log_filters, path_filter = nil)
