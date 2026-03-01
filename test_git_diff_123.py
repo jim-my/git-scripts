@@ -584,6 +584,37 @@ def init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path: Pa
     return repo
 
 
+def init_repo_with_one_sided_clean_change_merge(tmp_path: Path) -> Path:
+    """Completed merge where main changed f.txt but feature didn't.
+    f.txt appears in git diff-tree -m (differs from feature parent) and resolves cleanly.
+    Used to verify merge_tree_clean reason is returned for non-conflicting file analysis."""
+    repo = tmp_path / "repo_one_sided_clean"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "f.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "other.txt").write_text("feature-only\n", encoding="utf-8")
+    run(["git", "add", "other.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature adds other.txt"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "f.txt").write_text("changed\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main changes f.txt"], cwd=repo)
+
+    run(["git", "merge", "--no-ff", "-qm", "merge feature into main", "feature"],
+        cwd=repo, check=True)
+    return repo
+
+
 def init_repo_with_revert_conflict_and_clean_file(tmp_path: Path) -> Path:
     """In-progress revert where one file reverts cleanly while another conflicts."""
     repo = tmp_path / "repo_revert_clean_file"
@@ -612,8 +643,6 @@ def init_repo_with_revert_conflict_and_clean_file(tmp_path: Path) -> Path:
     revert_result = run(["git", "revert", revert_commit], cwd=repo, check=False)
     assert revert_result.returncode != 0
     return repo
-
-
 def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     repo = init_repo_with_conflict_merge_commit(tmp_path)
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -744,7 +773,7 @@ def test_find_commit_json_handles_multi_hunk_merge_file_conflicts(tmp_path):
     payload = json.loads(result.stdout)
     files = {entry["file"]: entry for entry in payload["files"]}
     assert files["f.txt"]["conflict_likely"] is True
-    assert files["f.txt"]["reason"] == "merge_file_conflict"
+    assert files["f.txt"]["reason"] == "merge_tree_conflict"
 
 
 def test_find_supports_git_log_filter_passthrough(tmp_path):
@@ -800,7 +829,7 @@ def test_find_does_not_leak_git_show_fatal_errors(tmp_path):
     result = run([str(SCRIPT_PATH), "--find"], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "fatal: path" not in result.stderr.lower()
-    assert "non_comparable(skipped)=" in result.stdout
+    assert "likely_clean" in result.stdout
 
 
 def test_find_json_does_not_leak_git_errors_to_stderr_outside_repo(tmp_path):
@@ -813,7 +842,7 @@ def test_find_json_does_not_leak_git_errors_to_stderr_outside_repo(tmp_path):
     assert result.stderr.strip() == ""
 
 
-def test_commit_summary_json_includes_non_comparable_reason(tmp_path):
+def test_commit_summary_json_reports_add_delete_files_as_clean(tmp_path):
     repo = init_repo_with_add_delete_merge_commit(tmp_path)
     head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
 
@@ -821,8 +850,9 @@ def test_commit_summary_json_includes_non_comparable_reason(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
+    # Files added by only one side (add/delete) are cleanly resolved by git merge-tree
     reasons = {entry.get("reason") for entry in payload["files"]}
-    assert any(reason and reason.startswith("missing_in_") for reason in reasons)
+    assert reasons == {"merge_tree_clean"}
 
 
 def test_audit_merge_allows_missing_side_file_for_review(tmp_path):
@@ -839,7 +869,7 @@ def test_audit_merge_allows_missing_side_file_for_review(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["conflict_likely"] is False
-    assert payload["reason"] == "missing_in_theirs_base"
+    assert payload["reason"] == "merge_tree_clean"
     assert Path(payload["resolved"]).exists()
     assert Path(payload["original_ours"]).read_text(encoding="utf-8") == "main only\n"
     assert Path(payload["original_base"]).read_text(encoding="utf-8") == ""
@@ -853,21 +883,15 @@ def test_commit_summary_text_groups_statuses_prettily(tmp_path):
     result = run([str(SCRIPT_PATH), "--commit", head], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     text = result.stdout
-    assert (
-        "likely_clean:" in text
-        or "likely_conflict:" in text
-        or "non_comparable(skipped):" in text
-    )
-    assert "non_comparable(skipped):" in text
+    assert "likely_clean:" in text
     assert "  - " in text or "  + " in text or "  ~ " in text
 
 
-def test_find_text_marks_unknown_when_no_files_are_analyzable(tmp_path):
+def test_find_text_marks_clean_for_add_delete_merge(tmp_path):
     repo = init_repo_with_add_delete_merge_commit(tmp_path)
     result = run([str(SCRIPT_PATH), "--find"], cwd=repo, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "status_unknown(non_comparable_only)" in result.stdout
-    assert "likely_clean" not in result.stdout
+    assert "likely_clean" in result.stdout
 
 
 def test_color_always_adds_ansi_sequences_in_text_mode(tmp_path):
@@ -1027,6 +1051,73 @@ def test_revert_clean_file_extract_models_reverse_patch_direction(tmp_path):
     assert Path(files["theirs"]).read_text(encoding="utf-8") == "base_clean\n"
 
 
+def test_merge_tree_returns_clean_reason_for_non_conflicting_file(tmp_path):
+    repo = init_repo_with_one_sided_clean_change_merge(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--find", "--commit", head, "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    files = {entry["file"]: entry for entry in payload["files"]}
+    assert "f.txt" in files
+    assert files["f.txt"]["conflict_likely"] is False
+    assert files["f.txt"]["reason"] == "merge_tree_clean"
+
+
+def init_repo_with_identical_net_change_merge(tmp_path: Path) -> Path:
+    """Merge where both parents changed the same line to the same value.
+
+    git merge-tree handles this cleanly (exit 0, no conflicts).
+    This scenario is the primary motivation for the merge-tree switch:
+    the old git merge-file approach also returned clean here, but the
+    reason string change (merge_file_clean → merge_tree_clean) serves
+    as the regression guard.
+    """
+    repo = tmp_path / "repo_identical_net_change"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "f.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "f.txt").write_text("resolved\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature: resolve"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "f.txt").write_text("resolved\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main: resolve"], cwd=repo)
+
+    # Both sides made the same change — git merge handles this cleanly.
+    run(["git", "merge", "--no-ff", "-qm", "merge identical changes", "feature"],
+        cwd=repo, check=True)
+    return repo
+
+
+def test_merge_tree_detects_identical_net_change_as_clean(tmp_path):
+    """Identical-net-change merges are clean: both parents changed the same line to the
+    same value, so git merge-tree exits 0 (no conflicts).
+
+    Uses --commit SHA FILE --json (audit path) rather than --find --commit because
+    git diff-tree -m returns no files when the merge result equals both parents,
+    so the file would not appear in --find output for this scenario.
+    """
+    repo = init_repo_with_identical_net_change_merge(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--commit", head, "f.txt", "--json"],
+                 cwd=repo, check=False)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["conflict_likely"] is False
+    assert payload["reason"] == "merge_tree_clean"
 def test_default_mode_can_target_file_named_help(tmp_path):
     repo = tmp_path / "repo_help_filename"
     repo.mkdir()
