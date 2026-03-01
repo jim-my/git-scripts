@@ -7,6 +7,7 @@ require 'json'
 require 'fileutils'
 require 'open3'
 require 'shellwords'
+require 'set'
 
 $color_mode = "auto"
 
@@ -144,6 +145,39 @@ def get_merge_base(ours, theirs)
     base = status.success? ? base.strip : ""
   end
   base
+end
+
+# Module-level cache: keyed by "parent1:parent2:base" → Set of conflicting filenames (or nil on error).
+MERGE_TREE_CACHE = {}
+
+# Runs `git merge-tree --write-tree --name-only` once per unique (parent1, parent2, base) triple.
+# Returns:
+#   Set[]            — clean merge (no conflicts)
+#   Set["a.txt", …] — conflict, with the listed files having conflict markers
+#   nil              — git internal error (exit 2+), treat as non_comparable
+def merge_tree_conflicts_for_commit(parent1, parent2, base)
+  cache_key = "#{parent1}:#{parent2}:#{base}"
+  return MERGE_TREE_CACHE[cache_key] if MERGE_TREE_CACHE.key?(cache_key)
+
+  out, _err, status = Open3.capture3(
+    "git", "merge-tree", "--write-tree", "--merge-base=#{base}", "--name-only",
+    parent1, parent2
+  )
+
+  result = case status.exitstatus
+           when 0
+             Set.new
+           when 1
+             # stdout: line 1 = tree SHA, lines 2..blank = conflicting filenames
+             lines = out.lines.map(&:chomp)
+             filenames = lines.drop(1).take_while { |l| !l.empty? }
+             Set.new(filenames)
+           else
+             nil
+           end
+
+  MERGE_TREE_CACHE[cache_key] = result
+  result
 end
 
 def blob_content_at_revision(rev, file)

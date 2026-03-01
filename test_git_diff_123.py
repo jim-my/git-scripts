@@ -584,6 +584,37 @@ def init_repo_with_cherry_pick_conflict_and_unrelated_clean_history(tmp_path: Pa
     return repo
 
 
+def init_repo_with_one_sided_clean_change_merge(tmp_path: Path) -> Path:
+    """Completed merge where main changed f.txt but feature didn't.
+    f.txt appears in git diff-tree -m (differs from feature parent) and resolves cleanly.
+    Used to verify merge_tree_clean reason is returned for non-conflicting file analysis."""
+    repo = tmp_path / "repo_one_sided_clean"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "f.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "other.txt").write_text("feature-only\n", encoding="utf-8")
+    run(["git", "add", "other.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature adds other.txt"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "f.txt").write_text("changed\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main changes f.txt"], cwd=repo)
+
+    run(["git", "merge", "--no-ff", "-qm", "merge feature into main", "feature"],
+        cwd=repo, check=True)
+    return repo
+
+
 def init_repo_with_revert_conflict_and_clean_file(tmp_path: Path) -> Path:
     """In-progress revert where one file reverts cleanly while another conflicts."""
     repo = tmp_path / "repo_revert_clean_file"
@@ -1025,6 +1056,19 @@ def test_revert_clean_file_extract_models_reverse_patch_direction(tmp_path):
     assert Path(files["ours"]).read_text(encoding="utf-8") == "changed_clean\n"
     assert Path(files["base"]).read_text(encoding="utf-8") == "changed_clean\n"
     assert Path(files["theirs"]).read_text(encoding="utf-8") == "base_clean\n"
+
+
+def test_merge_tree_returns_clean_reason_for_non_conflicting_file(tmp_path):
+    repo = init_repo_with_one_sided_clean_change_merge(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--find", "--commit", head, "--json"], cwd=repo, check=False)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    files = {entry["file"]: entry for entry in payload["files"]}
+    assert "f.txt" in files
+    assert files["f.txt"]["conflict_likely"] is False
+    assert files["f.txt"]["reason"] == "merge_tree_clean"
 
 
 def test_default_mode_can_target_file_named_help(tmp_path):
