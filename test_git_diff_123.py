@@ -643,8 +643,6 @@ def init_repo_with_revert_conflict_and_clean_file(tmp_path: Path) -> Path:
     revert_result = run(["git", "revert", revert_commit], cwd=repo, check=False)
     assert revert_result.returncode != 0
     return repo
-
-
 def test_audit_merge_json_reports_conflict_likely_true(tmp_path):
     repo = init_repo_with_conflict_merge_commit(tmp_path)
     commit = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -1120,8 +1118,6 @@ def test_merge_tree_detects_identical_net_change_as_clean(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["conflict_likely"] is False
     assert payload["reason"] == "merge_tree_clean"
-
-
 def test_default_mode_can_target_file_named_help(tmp_path):
     repo = tmp_path / "repo_help_filename"
     repo.mkdir()
