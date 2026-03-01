@@ -147,6 +147,7 @@ def get_merge_base(ours, theirs)
   base
 end
 
+# Keyed by "parent1_sha:parent2_sha" → Set of conflicting filenames (or nil on error).
 MERGE_TREE_CACHE = {}
 
 # Runs `git merge-tree --write-tree --name-only` once per unique (parent1, parent2) pair.
@@ -527,7 +528,7 @@ def audit_merge(file, commit, json_output = false)
     end
     return false
   end
-  conflict_likely = analysis["conflict_likely"].nil? ? false : analysis["conflict_likely"]
+  conflict_likely = analysis["conflict_likely"]
 
   tmpdir = Dir.mktmpdir("git-resolve-conflict-audit-")
   resolved_path = File.join(tmpdir, "resolved")
