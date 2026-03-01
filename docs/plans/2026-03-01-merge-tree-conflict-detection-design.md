@@ -25,10 +25,15 @@ it operates on manually-edited temp files, not commits — a follow-up ticket co
 
 ## Architecture
 
-### New helper: `merge_tree_conflicts_for_commit(parent1, parent2, base)`
+### New helper: `merge_tree_conflicts_for_commit(parent1, parent2)`
+
+> **Implementation note:** The `--merge-base=BASE` flag was dropped during implementation.
+> Passing a pre-computed base bypasses git's recursive virtual merge-base construction for
+> criss-cross histories — the primary correctness advantage over `git merge-file`. Without
+> the flag, git merge-tree computes the correct merge base automatically.
 
 ```
-git merge-tree --write-tree --merge-base=BASE --name-only PARENT1 PARENT2
+git merge-tree --write-tree --name-only PARENT1 PARENT2
 ```
 
 - **Exit 0** (clean merge): returns empty `Set[]`
