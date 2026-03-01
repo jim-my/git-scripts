@@ -147,20 +147,20 @@ def get_merge_base(ours, theirs)
   base
 end
 
-# Module-level cache: keyed by "parent1:parent2:base" → Set of conflicting filenames (or nil on error).
 MERGE_TREE_CACHE = {}
 
-# Runs `git merge-tree --write-tree --name-only` once per unique (parent1, parent2, base) triple.
+# Runs `git merge-tree --write-tree --name-only` once per unique (parent1, parent2) pair.
+# Lets git merge-tree compute its own merge base (including virtual base for criss-cross).
 # Returns:
 #   Set[]            — clean merge (no conflicts)
 #   Set["a.txt", …] — conflict, with the listed files having conflict markers
 #   nil              — git internal error (exit 2+), treat as non_comparable
-def merge_tree_conflicts_for_commit(parent1, parent2, base)
-  cache_key = "#{parent1}:#{parent2}:#{base}"
+def merge_tree_conflicts_for_commit(parent1, parent2)
+  cache_key = "#{parent1}:#{parent2}"
   return MERGE_TREE_CACHE[cache_key] if MERGE_TREE_CACHE.key?(cache_key)
 
   out, _err, status = Open3.capture3(
-    "git", "merge-tree", "--write-tree", "--merge-base=#{base}", "--name-only",
+    "git", "merge-tree", "--write-tree", "--name-only",
     parent1, parent2
   )
 
@@ -604,12 +604,7 @@ def conflict_likely_for_merge_file(commit, file)
   end
 
   parent1, parent2 = parents
-  base = get_merge_base(parent1, parent2)
-  if base.empty?
-    return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "missing_merge_base" }
-  end
-
-  conflict_set = merge_tree_conflicts_for_commit(parent1, parent2, base)
+  conflict_set = merge_tree_conflicts_for_commit(parent1, parent2)
   if conflict_set.nil?
     return { "conflict_likely" => nil, "status" => "non_comparable", "reason" => "merge_tree_error" }
   end
