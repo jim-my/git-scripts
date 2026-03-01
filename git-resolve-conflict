@@ -507,6 +507,13 @@ def audit_merge(file, commit, json_output = false)
 
   parents = get_merge_commit_parents(commit)
   parent1, parent2 = parents
+  # base serves two purposes here:
+  # 1. Display: base_content is shown so the user can see what the original looked like.
+  # 2. Guard: if no common ancestor exists (e.g. --allow-unrelated-histories merge),
+  #    we reject early to avoid a confusing "empty base" display.
+  # Note: conflict_likely_for_merge_file lets git merge-tree compute its own merge base
+  # internally, so it can succeed even in cases this guard would reject. The strict
+  # check here is intentional for audit mode's display needs.
   base = get_merge_base(parent1, parent2)
   if base.empty?
     msg = "Could not determine merge base for #{parent1[0..7]} and #{parent2[0..7]}"

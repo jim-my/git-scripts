@@ -1066,6 +1066,62 @@ def test_merge_tree_returns_clean_reason_for_non_conflicting_file(tmp_path):
     assert files["f.txt"]["reason"] == "merge_tree_clean"
 
 
+def init_repo_with_identical_net_change_merge(tmp_path: Path) -> Path:
+    """Merge where both parents changed the same line to the same value.
+
+    git merge-tree handles this cleanly (exit 0, no conflicts).
+    This scenario is the primary motivation for the merge-tree switch:
+    the old git merge-file approach also returned clean here, but the
+    reason string change (merge_file_clean → merge_tree_clean) serves
+    as the regression guard.
+    """
+    repo = tmp_path / "repo_identical_net_change"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "branch", "-m", "main"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+
+    (repo / "f.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "f.txt").write_text("resolved\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "feature: resolve"], cwd=repo)
+
+    run(["git", "checkout", "-q", "main"], cwd=repo)
+    (repo / "f.txt").write_text("resolved\n", encoding="utf-8")
+    run(["git", "add", "f.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "main: resolve"], cwd=repo)
+
+    # Both sides made the same change — git merge handles this cleanly.
+    run(["git", "merge", "--no-ff", "-qm", "merge identical changes", "feature"],
+        cwd=repo, check=True)
+    return repo
+
+
+def test_merge_tree_detects_identical_net_change_as_clean(tmp_path):
+    """Identical-net-change merges are clean: both parents changed the same line to the
+    same value, so git merge-tree exits 0 (no conflicts).
+
+    Uses --commit SHA FILE --json (audit path) rather than --find --commit because
+    git diff-tree -m returns no files when the merge result equals both parents,
+    so the file would not appear in --find output for this scenario.
+    """
+    repo = init_repo_with_identical_net_change_merge(tmp_path)
+    head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    result = run([str(SCRIPT_PATH), "--commit", head, "f.txt", "--json"],
+                 cwd=repo, check=False)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["conflict_likely"] is False
+    assert payload["reason"] == "merge_tree_clean"
+
+
 def test_default_mode_can_target_file_named_help(tmp_path):
     repo = tmp_path / "repo_help_filename"
     repo.mkdir()
