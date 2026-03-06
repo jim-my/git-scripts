@@ -28,7 +28,7 @@ class TestValidateRefName(unittest.TestCase):
     def test_valid_branch_names(self):
         """Test that valid branch names pass validation."""
         from importlib import import_module
-        sys.path.insert(0, os.path.dirname(__file__))
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
         # We'll test by executing git-wtf as a module
         # For now, test the regex pattern directly
         import re

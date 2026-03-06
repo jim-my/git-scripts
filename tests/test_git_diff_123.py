@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "git-resolve-conflict"
 LEGACY_SHIM_PATH = REPO_ROOT / "git-diff-123"
 

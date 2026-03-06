@@ -7,7 +7,7 @@ import types
 from pathlib import Path
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "mcp-server"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "mcp-server"))
 
 # Minimal stubs so server module can import without the external mcp package.
 mcp_module = types.ModuleType("mcp")
