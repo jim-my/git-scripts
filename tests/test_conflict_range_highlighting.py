@@ -114,3 +114,33 @@ def test_missing_argument_exits_nonzero(tmp_path):
         text=True,
     )
     assert result.returncode != 0
+
+
+def test_nonexistent_file_returns_json_error(tmp_path):
+    """Missing input file → JSON error, not silent empty ranges."""
+    result = subprocess.run(
+        [str(SCRIPT_PATH), "--tool-conflict-ranges",
+         "/nonexistent/ours", "/nonexistent/base", "/nonexistent/theirs"],
+        capture_output=True,
+        text=True,
+    )
+    data = json.loads(result.stdout)
+    assert result.returncode != 0
+    assert data["status"] == "error"
+    assert "message" in data
+
+
+def test_deletion_at_top_of_file_produces_valid_line_numbers(tmp_path):
+    """Ours deletes first line, theirs edits it → ours_start must be >= 1 (no lnum:0 in quickfix)."""
+    base = "first_line\nline2\nline3\n"
+    ours = "line2\nline3\n"          # deleted first line
+    theirs = "edited_first\nline2\nline3\n"  # edited first line
+
+    data, rc = conflict_ranges(ours, base, theirs, tmp_path)
+
+    assert rc == 0
+    assert data["status"] == "ok"
+    # May or may not detect a conflict range, but any reported range must have valid line numbers
+    for r in data["ranges"]:
+        assert r["ours_start"] >= 1, f"ours_start={r['ours_start']} is invalid (< 1)"
+        assert r["ours_end"] >= 1, f"ours_end={r['ours_end']} is invalid (< 1)"

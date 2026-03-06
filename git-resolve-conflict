@@ -93,6 +93,11 @@ def parse_diff_hunks(diff_output)
     base_end  = base_count  == 0 ? base_start  : base_start  + base_count  - 1
     other_end = other_count == 0 ? other_start : other_start + other_count - 1
 
+    # Clamp to valid 1-based line numbers; +0,0 hunks (e.g. top-of-file deletions)
+    # produce other_start=0 which breaks vim quickfix lnum.
+    other_start = [other_start, 1].max
+    other_end   = [other_end,   1].max
+
     hunks << {
       base_start: base_start, base_end: base_end,
       other_start: other_start, other_end: other_end
@@ -938,6 +943,11 @@ def main
     ours_path, base_path, theirs_path = args[1], args[2], args[3]
     unless ours_path && base_path && theirs_path
       puts("USAGE: #{File.basename __FILE__} --tool-conflict-ranges OURS BASE THEIRS")
+      exit 1
+    end
+    missing = [ours_path, base_path, theirs_path].reject { |p| File.exist?(p) }
+    unless missing.empty?
+      puts JSON.generate({ status: "error", message: "File(s) not found: #{missing.join(', ')}" })
       exit 1
     end
     ranges = find_conflict_ranges(ours_path, base_path, theirs_path)
