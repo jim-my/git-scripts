@@ -71,6 +71,57 @@ def get_git_editor
   editor.empty? ? 'vim' : editor
 end
 
+def editor_is_vim?(editor)
+  basename = File.basename(Shellwords.split(editor).first.to_s)
+  %w[vim nvim vi gvim mvim].include?(basename)
+end
+
+# Parse @@ -a[,b] +c[,d] @@ hunk headers from git diff output.
+# Returns array of {base_start, base_end, other_start, other_end}.
+# For insertions (count=0), start==end at the insertion anchor line.
+def parse_diff_hunks(diff_output)
+  hunks = []
+  diff_output.each_line do |line|
+    next unless line.start_with?("@@ ")
+    next unless line =~ /@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
+
+    base_start  = $1.to_i
+    base_count  = $2.nil? ? 1 : $2.to_i
+    other_start = $3.to_i
+    other_count = $4.nil? ? 1 : $4.to_i
+
+    base_end  = base_count  == 0 ? base_start  : base_start  + base_count  - 1
+    other_end = other_count == 0 ? other_start : other_start + other_count - 1
+
+    hunks << {
+      base_start: base_start, base_end: base_end,
+      other_start: other_start, other_end: other_end
+    }
+  end
+  hunks
+end
+
+def ranges_overlap?(a_start, a_end, b_start, b_end)
+  a_start <= b_end && b_start <= a_end
+end
+
+# Find conflict regions in ours by detecting overlapping hunk pairs in base coords.
+# Returns array of {ours_start, ours_end, base_start, base_end}.
+def find_conflict_ranges(ours_path, base_path, theirs_path)
+  ours_diff,   = Open3.capture3("git", "diff", "--no-index", "-U0", base_path, ours_path)
+  theirs_diff, = Open3.capture3("git", "diff", "--no-index", "-U0", base_path, theirs_path)
+
+  ours_hunks   = parse_diff_hunks(ours_diff)
+  theirs_hunks = parse_diff_hunks(theirs_diff)
+
+  ours_hunks.select do |oh|
+    theirs_hunks.any? { |th| ranges_overlap?(oh[:base_start], oh[:base_end], th[:base_start], th[:base_end]) }
+  end.map do |oh|
+    { ours_start: oh[:other_start], ours_end: oh[:other_end],
+      base_start: oh[:base_start],  base_end: oh[:base_end] }
+  end
+end
+
 def check_merge_conflict(file)
   output, status = Open3.capture2("git", "ls-files", "-u", "--", file)
   return true unless status.success?
@@ -337,6 +388,29 @@ def extract_conflict_files(file, json_output = false, emit_output = true)
   }
 end
 
+def print_conflict_range_hints(ours_ranges, theirs_ranges)
+  all_empty = ours_ranges.empty? && theirs_ranges.empty?
+  return if all_empty
+
+  puts "\nConflict regions (navigate with :cn/:cp in vim):"
+  ours_ranges.each { |r| puts "  ours  : lines #{r[:ours_start]}-#{r[:ours_end]}" }
+  theirs_ranges.each { |r| puts "  theirs: lines #{r[:ours_start]}-#{r[:ours_end]}" }
+end
+
+def open_in_editor_with_ranges(editor, file_a, file_b, conflict_ranges_in_b)
+  cmd = Shellwords.split(editor)
+  vim_cmds = ["set diffopt+=iwhite"]
+
+  if editor_is_vim?(editor) && !conflict_ranges_in_b.empty?
+    entries = conflict_ranges_in_b.map do |r|
+      "{'filename':'#{file_b.gsub("'", "\\\\'")}','lnum':#{r[:ours_start]},'col':1,'text':'conflict lines #{r[:ours_start]}-#{r[:ours_end]}'}"
+    end.join(",")
+    vim_cmds.unshift("call setqflist([#{entries}]) | cfirst")
+  end
+
+  system(*cmd, *vim_cmds.flat_map { |c| ["-c", c] }, "-d", file_a, file_b)
+end
+
 def run_guided_resolution(file, dry_run = false)
   editor = get_git_editor
   extracted = extract_conflict_files(file, false, false)
@@ -352,7 +426,11 @@ def run_guided_resolution(file, dry_run = false)
 
   print_conflict_summary(file)
 
+  ours_ranges   = find_conflict_ranges(file_ours,   file_base, file_theirs)
+  theirs_ranges = find_conflict_ranges(file_theirs, file_base, file_ours)
+
   loop do
+    print_conflict_range_hints(ours_ranges, theirs_ranges)
     puts "
 Choose a diff to view for '#{file}':"
     puts "1. Edit Ours vs Base (auto re-merge)"
@@ -368,13 +446,13 @@ Choose a diff to view for '#{file}':"
 
     case choice
     when '1'
-      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_base, file_ours)
+      open_in_editor_with_ranges(editor, file_base, file_ours, ours_ranges)
       should_try_remerge = true
     when '2'
-      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_base, file_theirs)
+      open_in_editor_with_ranges(editor, file_base, file_theirs, theirs_ranges)
       should_try_remerge = true
     when '3'
-      system(*Shellwords.split(editor), "-c", "set diffopt+=iwhite", "-d", file_theirs, file_ours)
+      open_in_editor_with_ranges(editor, file_theirs, file_ours, ours_ranges)
       should_try_remerge = true
     when '4'
       should_try_remerge = true
@@ -390,6 +468,10 @@ Choose a diff to view for '#{file}':"
       review_resolved_vs_originals(file, original_ours, original_theirs, original_base)
       return true
     end
+
+    # Recompute ranges after each edit attempt — ours/theirs files may have changed
+    ours_ranges   = find_conflict_ranges(file_ours,   file_base, file_theirs)
+    theirs_ranges = find_conflict_ranges(file_theirs, file_base, file_ours)
 
     puts "\nStill conflicted. Keep editing or quit."
   end
@@ -850,6 +932,17 @@ def main
     end
     success = remerge_from_files(file, ours_path, base_path, theirs_path, dry_run, true)
     exit(success ? 0 : 1)
+  end
+
+  if args[0] == '--tool-conflict-ranges'
+    ours_path, base_path, theirs_path = args[1], args[2], args[3]
+    unless ours_path && base_path && theirs_path
+      puts("USAGE: #{File.basename __FILE__} --tool-conflict-ranges OURS BASE THEIRS")
+      exit 1
+    end
+    ranges = find_conflict_ranges(ours_path, base_path, theirs_path)
+    puts JSON.generate({ status: "ok", ranges: ranges })
+    return
   end
 
   if args.include?('--find')
