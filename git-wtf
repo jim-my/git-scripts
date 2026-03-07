@@ -126,6 +126,8 @@ If [branch] is not specified, git-wtf will use the current branch. The possible
   -r, --relations     show relation to features / integration branches
       --dump-config   print out current configuration and exit
   -f, --filename      show changes of filename
+  -u, --upstream <b>  compare against branch <b> instead of the configured
+                      tracking branch (e.g. --upstream origin/develop)
 
 git-wtf uses some heuristics to determine which branches are integration
 branches, and which are feature branches. (Specifically, it assumes the
