@@ -109,3 +109,81 @@ def test_diff_mode_uses_correct_target_for_colliding_sanitized_names(tmp_path):
     assert "Diff for: a_b.txt" in result.stdout
     assert "target path a/b" in result.stdout
     assert "target path a_b" in result.stdout
+
+
+def test_no_untracked_files(tmp_path):
+    """When there are no untracked files, report clearly and exit 0."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "base.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    run(["git", "checkout", "-q", "HEAD~0"], cwd=repo)  # detached, no untracked
+
+    # No untracked files on the initial branch
+    result = run([str(SCRIPT_PATH), "feature"], cwd=repo)
+
+    assert result.returncode == 0
+    assert "No untracked files found." in result.stdout
+
+
+def test_no_overlap_with_target_ref(tmp_path):
+    """When untracked files don't appear in the target ref, report clearly and exit 0."""
+    repo = init_repo(tmp_path)
+    # Add an extra untracked file that doesn't exist in the feature branch
+    (repo / "only_local.txt").write_text("local only\n", encoding="utf-8")
+
+    # Remove the files that DO overlap so only the non-overlapping file remains
+    (repo / "same.txt").unlink()
+    (repo / "different.txt").unlink()
+
+    result = run([str(SCRIPT_PATH), "feature"], cwd=repo)
+
+    assert result.returncode == 0
+    assert "No untracked files would be overwritten" in result.stdout
+
+
+def test_help_flag_exits_zero_with_usage(tmp_path):
+    """--help prints usage and exits 0."""
+    repo = init_repo(tmp_path)
+    result = run([str(SCRIPT_PATH), "--help"], cwd=repo, check=False)
+
+    assert result.returncode == 0
+    assert "Usage:" in result.stdout
+
+
+def test_no_args_exits_nonzero_with_usage(tmp_path):
+    """No arguments exits non-zero and prints usage."""
+    repo = init_repo(tmp_path)
+    result = run([str(SCRIPT_PATH)], cwd=repo, check=False)
+
+    assert result.returncode != 0
+    assert "Usage:" in result.stdout
+
+
+def test_detects_overlap_when_invoked_from_subdirectory(tmp_path):
+    """Running from a subdirectory correctly detects overlap (subdirectory bug)."""
+    repo = init_repo(tmp_path)
+    subdir = repo / "subdir"
+    subdir.mkdir()
+
+    result = run([str(SCRIPT_PATH), "feature"], cwd=subdir)
+
+    assert "  - same.txt" in result.stdout
+    assert "  - different.txt" in result.stdout
+
+
+def test_diff_labels_show_ref_not_tmpdir_path(tmp_path):
+    """--diff output labels use 'local:<file>' and '<ref>:<file>', not tmpdir paths."""
+    repo = init_repo(tmp_path)
+    result = run([str(SCRIPT_PATH), "feature", "--diff"], cwd=repo)
+
+    # Should NOT contain any /tmp or /var path fragments
+    assert "/tmp" not in result.stdout
+    assert "target.XXXXXX" not in result.stdout
+    assert "local:different.txt" in result.stdout
+    assert "feature:different.txt" in result.stdout
