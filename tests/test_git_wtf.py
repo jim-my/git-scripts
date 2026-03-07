@@ -449,7 +449,23 @@ class TestUpstreamArgParsing(unittest.TestCase):
         with patch.object(sys, 'argv', ['git-wtf', '--upstream']):
             with self.assertRaises(SystemExit) as ctx:
                 mod.parse_args()
-        self.assertEqual(ctx.exception.code, 1)
+        self.assertEqual(ctx.exception.code, mod.ExitCode.ERROR)
+
+    def test_upstream_flag_followed_by_another_flag_exits(self):
+        """--upstream followed by another flag (no value) exits with code 1."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '--upstream', '--verbose']):
+            with self.assertRaises(SystemExit) as ctx:
+                mod.parse_args()
+        self.assertEqual(ctx.exception.code, mod.ExitCode.ERROR)
+
+    def test_upstream_short_flag_missing_value_exits(self):
+        """-u without a value exits with code 1."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '-u']):
+            with self.assertRaises(SystemExit) as ctx:
+                mod.parse_args()
+        self.assertEqual(ctx.exception.code, mod.ExitCode.ERROR)
 
 
 if __name__ == '__main__':

@@ -828,6 +828,7 @@ def parse_args() -> Dict[str, Any]:
     for flag in ['--upstream', '-u']:
         if flag in sys.argv:
             idx = sys.argv.index(flag)
+            # Note: branch names starting with '-' are not supported as upstream values
             if idx + 1 >= len(sys.argv) or sys.argv[idx + 1].startswith('-'):
                 print(f"Error: {flag} requires a branch argument.", file=sys.stderr)
                 sys.exit(ExitCode.ERROR)
