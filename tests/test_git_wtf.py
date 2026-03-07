@@ -538,6 +538,44 @@ class TestUpstreamOverrideInMain(unittest.TestCase):
 
         self.assertEqual(result, mod.ExitCode.ERROR)
 
+    def test_upstream_remote_style_ref_resolves_via_tracking_branch(self):
+        """--upstream origin/develop resolves even when stored as remote_branch of 'develop'."""
+        mod = self._import_git_wtf()
+
+        # Common setup: local 'develop' tracks 'origin/develop', keyed as 'develop'
+        all_branches = {
+            'feature': {
+                'name': 'feature',
+                'local_branch': 'heads/feature',
+                'remote_branch': 'origin/feature',
+                'remote_url': 'git@github.com:org/repo.git',
+            },
+            'develop': {
+                'name': 'develop',
+                'local_branch': 'heads/develop',
+                'remote_branch': 'origin/develop',
+                'remote_url': 'git@github.com:org/repo.git',
+            },
+        }
+
+        captured = []
+        def fake_show_branch_status(branch_info):
+            captured.append(branch_info.copy())
+
+        with patch.object(sys, 'argv', ['git-wtf', 'feature', '--upstream', 'origin/develop']), \
+             patch.object(mod, 'get_remotes', return_value={}), \
+             patch.object(mod, 'get_tracked_branches', return_value={}), \
+             patch.object(mod, 'get_all_branches', return_value=(all_branches, {})), \
+             patch.object(mod, 'assemble_remote_refs', return_value=None), \
+             patch.object(mod, 'show_branch_status', side_effect=fake_show_branch_status), \
+             patch.object(mod, 'show_branch_relations', return_value=None):
+            result = mod.main()
+
+        self.assertEqual(result, mod.ExitCode.SUCCESS)
+        self.assertEqual(len(captured), 1)
+        # remote_branch should be origin/develop (preferred over local_branch)
+        self.assertEqual(captured[0]['remote_branch'], 'origin/develop')
+
 
 if __name__ == '__main__':
     # Run with coverage if pytest-cov is available

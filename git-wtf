@@ -911,10 +911,19 @@ def main() -> int:
     upstream_branch_info = None
     if args.get('upstream'):
         upstream_ref = args['upstream']
-        if upstream_ref not in all_branches:
+        if upstream_ref in all_branches:
+            upstream_branch_info = all_branches[upstream_ref]
+        else:
+            # Also accept remote-style refs (e.g. 'origin/develop') that are stored
+            # as remote_branch of a local tracking branch (keyed as 'develop')
+            upstream_branch_info = next(
+                (br for br in all_branches.values()
+                 if br.get('remote_branch') == upstream_ref),
+                None
+            )
+        if upstream_branch_info is None:
             print(f"Error: can't find upstream branch {upstream_ref!r}.", file=sys.stderr)
             return ExitCode.ERROR
-        upstream_branch_info = all_branches[upstream_ref]
 
     # Determine target branches
     if not args['targets']:
