@@ -1,0 +1,145 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+    cat << 'EOF'
+Usage: git-untracked-overwritten <ref> [--diff]
+
+Find untracked working-tree files that are tracked in <ref>, then classify:
+  - identical files (safe to delete)
+  - different files (review before merge)
+
+Options:
+  --diff   Print inline diffs for files in the "different" bucket
+  -h, --help  Show this help
+EOF
+}
+
+error_exit() {
+    local msg="$1"
+    echo "Error: $msg" >&2
+    exit 1
+}
+
+if [[ $# -eq 0 ]]; then
+    usage
+    exit 1
+fi
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    error_exit "not in a git repository"
+fi
+
+target_ref=""
+show_diff=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --diff)
+            show_diff=true
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            error_exit "unknown option '$1'"
+            ;;
+        *)
+            if [[ -z "$target_ref" ]]; then
+                target_ref="$1"
+            else
+                error_exit "only one ref is supported"
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [[ -z "$target_ref" ]]; then
+    error_exit "ref is required"
+fi
+
+if ! git rev-parse --verify "${target_ref}^{commit}" >/dev/null 2>&1; then
+    error_exit "could not resolve ref '$target_ref'"
+fi
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+untracked_list="$tmpdir/untracked.txt"
+target_list="$tmpdir/target.txt"
+overlap_list="$tmpdir/overlap.txt"
+identical_list="$tmpdir/identical.txt"
+different_list="$tmpdir/different.txt"
+
+git ls-files --others --exclude-standard > "$untracked_list"
+if [[ ! -s "$untracked_list" ]]; then
+    echo "No untracked files found."
+    exit 0
+fi
+
+git ls-tree -r --name-only "$target_ref" > "$target_list"
+
+LC_ALL=C sort -u "$untracked_list" > "$untracked_list.sorted"
+LC_ALL=C sort -u "$target_list" > "$target_list.sorted"
+comm -12 "$untracked_list.sorted" "$target_list.sorted" > "$overlap_list"
+
+if [[ ! -s "$overlap_list" ]]; then
+    echo "No untracked files would be overwritten by '$target_ref'."
+    exit 0
+fi
+
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    target_copy="$tmpdir/target.$(printf '%s' "$file" | tr '/ ' '__')"
+    mkdir -p "$(dirname "$target_copy")"
+    if ! git show "${target_ref}:${file}" > "$target_copy" 2>/dev/null; then
+        continue
+    fi
+
+    if cmp -s -- "$file" "$target_copy"; then
+        printf '%s\n' "$file" >> "$identical_list"
+    else
+        printf '%s\n' "$file" >> "$different_list"
+    fi
+done < "$overlap_list"
+
+if [[ ! -s "$identical_list" && ! -s "$different_list" ]]; then
+    echo "No untracked files would be overwritten by '$target_ref'."
+    exit 0
+fi
+
+echo "Target ref: $target_ref"
+echo ""
+echo "Identical (safe to delete):"
+if [[ ! -s "$identical_list" ]]; then
+    echo "  (none)"
+else
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        echo "  - $file"
+    done < "$identical_list"
+fi
+
+echo ""
+echo "Different (review before merge):"
+if [[ ! -s "$different_list" ]]; then
+    echo "  (none)"
+else
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        echo "  - $file"
+    done < "$different_list"
+fi
+
+if [[ "$show_diff" == true && -s "$different_list" ]]; then
+    echo ""
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        target_copy="$tmpdir/target.$(printf '%s' "$file" | tr '/ ' '__')"
+        echo "Diff for: $file"
+        git diff --no-index -- "$file" "$target_copy" || true
+        echo ""
+    done < "$different_list"
+fi
