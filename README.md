@@ -222,6 +222,7 @@ Output buckets:
 - `Identical (safe to delete)` - local untracked file is byte-identical to target ref
 - `Different (review before merge)` - local file differs from target ref version
 
+> Checks exact path overlaps only (does not detect file/directory prefix collisions).
 
 ### Historical Analysis
 ```bash

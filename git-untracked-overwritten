@@ -9,6 +9,8 @@ Find untracked working-tree files that are tracked in <ref>, then classify:
   - identical files (safe to delete)
   - different files (review before merge)
 
+Note: checks exact path overlaps only (does not detect file/directory prefix collisions).
+
 Options:
   --diff   Print inline diffs for files in the "different" bucket
   -h, --help  Show this help
