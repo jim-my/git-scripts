@@ -821,7 +821,20 @@ def parse_args() -> Dict[str, Any]:
         'show_key': '--key' in sys.argv or '-k' in sys.argv,
         'show_relations': '--relations' in sys.argv or '-r' in sys.argv,
         'show_filename': '--filename' in sys.argv or '-f' in sys.argv,
+        'upstream': None,  # set below
     }
+
+    # Parse --upstream/-u flag (takes a value argument)
+    for flag in ['--upstream', '-u']:
+        if flag in sys.argv:
+            idx = sys.argv.index(flag)
+            if idx + 1 >= len(sys.argv) or sys.argv[idx + 1].startswith('-'):
+                print(f"Error: {flag} requires a branch argument.", file=sys.stderr)
+                sys.exit(ExitCode.ERROR)
+            args['upstream'] = sys.argv[idx + 1]
+            sys.argv.pop(idx + 1)
+            sys.argv.pop(idx)
+            break
 
     # Remove processed arguments
     for flag in ['-v', '--verbose', '--long', '-l', '--short', '-s',

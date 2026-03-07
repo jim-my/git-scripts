@@ -398,6 +398,60 @@ class TestPerformance(unittest.TestCase):
         self.assertGreater(GIT_TIMEOUT, 0)
 
 
+class TestUpstreamArgParsing(unittest.TestCase):
+    """Test --upstream / -u argument parsing."""
+
+    def _import_git_wtf(self):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "git-wtf")
+        loader = importlib.machinery.SourceFileLoader("git_wtf", path)
+        spec = importlib.util.spec_from_loader("git_wtf", loader, origin=path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_upstream_long_flag(self):
+        """--upstream <ref> is parsed into args['upstream']."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '--upstream', 'origin/develop']):
+            args = mod.parse_args()
+        self.assertEqual(args['upstream'], 'origin/develop')
+        # flag and value are consumed; no leftover targets
+        self.assertEqual(args['targets'], [])
+
+    def test_upstream_short_flag(self):
+        """-u <ref> is parsed into args['upstream']."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '-u', 'main']):
+            args = mod.parse_args()
+        self.assertEqual(args['upstream'], 'main')
+        self.assertEqual(args['targets'], [])
+
+    def test_no_upstream_flag(self):
+        """When --upstream is absent, args['upstream'] is None."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf']):
+            args = mod.parse_args()
+        self.assertIsNone(args['upstream'])
+
+    def test_upstream_with_target_branch(self):
+        """--upstream can coexist with a positional target branch."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', 'my-feature', '--upstream', 'main']):
+            args = mod.parse_args()
+        self.assertEqual(args['upstream'], 'main')
+        self.assertEqual(args['targets'], ['my-feature'])
+
+    def test_upstream_missing_value_exits(self):
+        """--upstream without a value exits with code 1."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '--upstream']):
+            with self.assertRaises(SystemExit) as ctx:
+                mod.parse_args()
+        self.assertEqual(ctx.exception.code, 1)
+
+
 if __name__ == '__main__':
     # Run with coverage if pytest-cov is available
     try:
