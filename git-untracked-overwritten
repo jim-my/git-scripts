@@ -30,6 +30,8 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     error_exit "not in a git repository"
 fi
 
+cd "$(git rev-parse --show-toplevel)"
+
 target_ref=""
 show_diff=false
 
@@ -95,6 +97,7 @@ while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     target_copy="$(mktemp "$tmpdir/target.XXXXXX")"
     if ! git show "${target_ref}:${file}" > "$target_copy" 2>/dev/null; then
+        echo "Warning: could not read '${target_ref}:${file}', skipping" >&2
         continue
     fi
 
@@ -139,7 +142,7 @@ if [[ "$show_diff" == true && -s "$different_list" ]]; then
     while IFS=$'\t' read -r file target_copy; do
         [[ -z "$file" || -z "$target_copy" ]] && continue
         echo "Diff for: $file"
-        git diff --no-index -- "$file" "$target_copy" || true
+        diff -u --label "local:${file}" --label "${target_ref}:${file}" -- "$file" "$target_copy" || true
         echo ""
     done < "$different_pairs"
 fi
