@@ -398,6 +398,185 @@ class TestPerformance(unittest.TestCase):
         self.assertGreater(GIT_TIMEOUT, 0)
 
 
+class TestUpstreamArgParsing(unittest.TestCase):
+    """Test --upstream / -u argument parsing."""
+
+    def _import_git_wtf(self):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "git-wtf")
+        loader = importlib.machinery.SourceFileLoader("git_wtf", path)
+        spec = importlib.util.spec_from_loader("git_wtf", loader, origin=path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_upstream_long_flag(self):
+        """--upstream <ref> is parsed into args['upstream']."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '--upstream', 'origin/develop']):
+            args = mod.parse_args()
+        self.assertEqual(args['upstream'], 'origin/develop')
+        # flag and value are consumed; no leftover targets
+        self.assertEqual(args['targets'], [])
+
+    def test_upstream_short_flag(self):
+        """-u <ref> is parsed into args['upstream']."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '-u', 'main']):
+            args = mod.parse_args()
+        self.assertEqual(args['upstream'], 'main')
+        self.assertEqual(args['targets'], [])
+
+    def test_no_upstream_flag(self):
+        """When --upstream is absent, args['upstream'] is None."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf']):
+            args = mod.parse_args()
+        self.assertIsNone(args['upstream'])
+
+    def test_upstream_with_target_branch(self):
+        """--upstream can coexist with a positional target branch."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', 'my-feature', '--upstream', 'main']):
+            args = mod.parse_args()
+        self.assertEqual(args['upstream'], 'main')
+        self.assertEqual(args['targets'], ['my-feature'])
+
+    def test_upstream_missing_value_exits(self):
+        """--upstream without a value exits with code 1."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '--upstream']):
+            with self.assertRaises(SystemExit) as ctx:
+                mod.parse_args()
+        self.assertEqual(ctx.exception.code, mod.ExitCode.ERROR)
+
+    def test_upstream_flag_followed_by_another_flag_exits(self):
+        """--upstream followed by another flag (no value) exits with code 1."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '--upstream', '--verbose']):
+            with self.assertRaises(SystemExit) as ctx:
+                mod.parse_args()
+        self.assertEqual(ctx.exception.code, mod.ExitCode.ERROR)
+
+    def test_upstream_short_flag_missing_value_exits(self):
+        """-u without a value exits with code 1."""
+        mod = self._import_git_wtf()
+        with patch.object(sys, 'argv', ['git-wtf', '-u']):
+            with self.assertRaises(SystemExit) as ctx:
+                mod.parse_args()
+        self.assertEqual(ctx.exception.code, mod.ExitCode.ERROR)
+
+
+class TestUpstreamOverrideInMain(unittest.TestCase):
+    """Test that --upstream overrides remote_branch in show_branch_status."""
+
+    def _import_git_wtf(self):
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader(
+            "git_wtf",
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "git-wtf")
+        )
+        spec = importlib.util.spec_from_loader("git_wtf", loader)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_upstream_override_changes_remote_branch(self):
+        """When --upstream is set, show_branch_status receives overridden remote_branch."""
+        mod = self._import_git_wtf()
+
+        all_branches = {
+            'feature': {
+                'name': 'feature',
+                'local_branch': 'heads/feature',
+                'remote_branch': 'origin/feature',
+                'remote_url': 'git@github.com:org/repo.git',
+            },
+            'main': {
+                'name': 'main',
+                'local_branch': 'heads/main',
+                'remote_url': '',
+            },
+        }
+
+        captured = []
+        def fake_show_branch_status(branch_info):
+            captured.append(branch_info.copy())
+
+        with patch.object(sys, 'argv', ['git-wtf', 'feature', '--upstream', 'main']), \
+             patch.object(mod, 'get_remotes', return_value={}), \
+             patch.object(mod, 'get_tracked_branches', return_value={}), \
+             patch.object(mod, 'get_all_branches', return_value=(all_branches, {})), \
+             patch.object(mod, 'assemble_remote_refs', return_value=None), \
+             patch.object(mod, 'show_branch_status', side_effect=fake_show_branch_status), \
+             patch.object(mod, 'show_branch_relations', return_value=None):
+            mod.main()
+
+        self.assertEqual(len(captured), 1)
+        # remote_branch should be heads/main (local_branch of 'main')
+        self.assertEqual(captured[0]['remote_branch'], 'heads/main')
+
+    def test_upstream_not_found_exits_with_error(self):
+        """When --upstream branch doesn't exist, main() returns error code."""
+        mod = self._import_git_wtf()
+
+        all_branches = {
+            'feature': {
+                'name': 'feature',
+                'local_branch': 'heads/feature',
+            },
+        }
+
+        with patch.object(sys, 'argv', ['git-wtf', 'feature', '--upstream', 'nonexistent']), \
+             patch.object(mod, 'get_remotes', return_value={}), \
+             patch.object(mod, 'get_tracked_branches', return_value={}), \
+             patch.object(mod, 'get_all_branches', return_value=(all_branches, {})), \
+             patch.object(mod, 'assemble_remote_refs', return_value=None):
+            result = mod.main()
+
+        self.assertEqual(result, mod.ExitCode.ERROR)
+
+    def test_upstream_remote_style_ref_resolves_via_tracking_branch(self):
+        """--upstream origin/develop resolves even when stored as remote_branch of 'develop'."""
+        mod = self._import_git_wtf()
+
+        # Common setup: local 'develop' tracks 'origin/develop', keyed as 'develop'
+        all_branches = {
+            'feature': {
+                'name': 'feature',
+                'local_branch': 'heads/feature',
+                'remote_branch': 'origin/feature',
+                'remote_url': 'git@github.com:org/repo.git',
+            },
+            'develop': {
+                'name': 'develop',
+                'local_branch': 'heads/develop',
+                'remote_branch': 'origin/develop',
+                'remote_url': 'git@github.com:org/repo.git',
+            },
+        }
+
+        captured = []
+        def fake_show_branch_status(branch_info):
+            captured.append(branch_info.copy())
+
+        with patch.object(sys, 'argv', ['git-wtf', 'feature', '--upstream', 'origin/develop']), \
+             patch.object(mod, 'get_remotes', return_value={}), \
+             patch.object(mod, 'get_tracked_branches', return_value={}), \
+             patch.object(mod, 'get_all_branches', return_value=(all_branches, {})), \
+             patch.object(mod, 'assemble_remote_refs', return_value=None), \
+             patch.object(mod, 'show_branch_status', side_effect=fake_show_branch_status), \
+             patch.object(mod, 'show_branch_relations', return_value=None):
+            result = mod.main()
+
+        self.assertEqual(result, mod.ExitCode.SUCCESS)
+        self.assertEqual(len(captured), 1)
+        # remote_branch should be origin/develop (preferred over local_branch)
+        self.assertEqual(captured[0]['remote_branch'], 'origin/develop')
+
+
 if __name__ == '__main__':
     # Run with coverage if pytest-cov is available
     try:

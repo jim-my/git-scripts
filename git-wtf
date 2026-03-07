@@ -126,6 +126,8 @@ If [branch] is not specified, git-wtf will use the current branch. The possible
   -r, --relations     show relation to features / integration branches
       --dump-config   print out current configuration and exit
   -f, --filename      show changes of filename
+  -u, --upstream <b>  compare against branch <b> instead of the configured
+                      tracking branch (e.g. --upstream origin/develop)
 
 git-wtf uses some heuristics to determine which branches are integration
 branches, and which are feature branches. (Specifically, it assumes the
@@ -821,7 +823,21 @@ def parse_args() -> Dict[str, Any]:
         'show_key': '--key' in sys.argv or '-k' in sys.argv,
         'show_relations': '--relations' in sys.argv or '-r' in sys.argv,
         'show_filename': '--filename' in sys.argv or '-f' in sys.argv,
+        'upstream': None,  # set below
     }
+
+    # Parse --upstream/-u flag (takes a value argument)
+    for flag in ['--upstream', '-u']:
+        if flag in sys.argv:
+            idx = sys.argv.index(flag)
+            # Note: branch names starting with '-' are not supported as upstream values
+            if idx + 1 >= len(sys.argv) or sys.argv[idx + 1].startswith('-'):
+                print(f"Error: {flag} requires a branch argument.", file=sys.stderr)
+                sys.exit(ExitCode.ERROR)
+            args['upstream'] = sys.argv[idx + 1]
+            sys.argv.pop(idx + 1)
+            sys.argv.pop(idx)
+            break
 
     # Remove processed arguments
     for flag in ['-v', '--verbose', '--long', '-l', '--short', '-s',
@@ -891,6 +907,24 @@ def main() -> int:
         print(f"Error: {e}", file=sys.stderr)
         return ExitCode.GIT_ERROR
 
+    # Resolve upstream override (--upstream / -u)
+    upstream_branch_info = None
+    if args.get('upstream'):
+        upstream_ref = args['upstream']
+        if upstream_ref in all_branches:
+            upstream_branch_info = all_branches[upstream_ref]
+        else:
+            # Also accept remote-style refs (e.g. 'origin/develop') that are stored
+            # as remote_branch of a local tracking branch (keyed as 'develop')
+            upstream_branch_info = next(
+                (br for br in all_branches.values()
+                 if br.get('remote_branch') == upstream_ref),
+                None
+            )
+        if upstream_branch_info is None:
+            print(f"Error: can't find upstream branch {upstream_ref!r}.", file=sys.stderr)
+            return ExitCode.ERROR
+
     # Determine target branches
     if not args['targets']:
         current = get_current_branch()
@@ -913,9 +947,16 @@ def main() -> int:
 
     # Show status for each target
     for branch_info in target_branches:
-        show_branch_status(branch_info)
-        if args['show_relations'] or not branch_info.get('remote_branch'):
-            show_branch_relations(branch_info, all_branches)
+        display_info = branch_info
+        if upstream_branch_info is not None:
+            upstream_ref = (upstream_branch_info.get('remote_branch') or
+                            upstream_branch_info.get('local_branch'))
+            display_info = dict(branch_info)
+            display_info['remote_branch'] = upstream_ref
+            display_info['remote_url'] = upstream_branch_info.get('remote_url', '')
+        show_branch_status(display_info)
+        if args['show_relations'] or not display_info.get('remote_branch'):
+            show_branch_relations(display_info, all_branches)
 
     # Check working directory status
     if show_dirty:
