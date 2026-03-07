@@ -26,6 +26,7 @@ def init_repo(tmp_path: Path) -> Path:
     run(["git", "init", "-q"], cwd=repo)
     run(["git", "config", "user.name", "Test User"], cwd=repo)
     run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+    initial_branch = run(["git", "symbolic-ref", "--short", "HEAD"], cwd=repo).stdout.strip()
 
     (repo / "base.txt").write_text("base\n", encoding="utf-8")
     run(["git", "add", "base.txt"], cwd=repo)
@@ -37,9 +38,37 @@ def init_repo(tmp_path: Path) -> Path:
     run(["git", "add", "same.txt", "different.txt"], cwd=repo)
     run(["git", "commit", "-qm", "add target files"], cwd=repo)
 
-    run(["git", "checkout", "-q", "main"], cwd=repo)
+    run(["git", "checkout", "-q", initial_branch], cwd=repo)
     (repo / "same.txt").write_text("same content\n", encoding="utf-8")
     (repo / "different.txt").write_text("local different content\n", encoding="utf-8")
+
+    return repo
+
+
+def init_collision_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo_collision"
+    repo.mkdir()
+
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+    initial_branch = run(["git", "symbolic-ref", "--short", "HEAD"], cwd=repo).stdout.strip()
+
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", "base.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "a").mkdir(exist_ok=True)
+    (repo / "a" / "b.txt").write_text("target path a/b\n", encoding="utf-8")
+    (repo / "a_b.txt").write_text("target path a_b\n", encoding="utf-8")
+    run(["git", "add", "a/b.txt", "a_b.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "add collision-prone file names"], cwd=repo)
+
+    run(["git", "checkout", "-q", initial_branch], cwd=repo)
+    (repo / "a").mkdir(exist_ok=True)
+    (repo / "a" / "b.txt").write_text("local path a/b\n", encoding="utf-8")
+    (repo / "a_b.txt").write_text("local path a_b\n", encoding="utf-8")
 
     return repo
 
@@ -69,3 +98,14 @@ def test_errors_for_unknown_ref(tmp_path):
 
     assert result.returncode == 1
     assert "Error: could not resolve ref 'missing-ref'" in result.stderr
+
+
+def test_diff_mode_uses_correct_target_for_colliding_sanitized_names(tmp_path):
+    repo = init_collision_repo(tmp_path)
+
+    result = run([str(SCRIPT_PATH), "feature", "--diff"], cwd=repo)
+
+    assert "Diff for: a/b.txt" in result.stdout
+    assert "Diff for: a_b.txt" in result.stdout
+    assert "target path a/b" in result.stdout
+    assert "target path a_b" in result.stdout

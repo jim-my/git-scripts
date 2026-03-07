@@ -72,6 +72,7 @@ target_list="$tmpdir/target.txt"
 overlap_list="$tmpdir/overlap.txt"
 identical_list="$tmpdir/identical.txt"
 different_list="$tmpdir/different.txt"
+different_pairs="$tmpdir/different_pairs.tsv"
 
 git ls-files --others --exclude-standard > "$untracked_list"
 if [[ ! -s "$untracked_list" ]]; then
@@ -92,8 +93,7 @@ fi
 
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
-    target_copy="$tmpdir/target.$(printf '%s' "$file" | tr '/ ' '__')"
-    mkdir -p "$(dirname "$target_copy")"
+    target_copy="$(mktemp "$tmpdir/target.XXXXXX")"
     if ! git show "${target_ref}:${file}" > "$target_copy" 2>/dev/null; then
         continue
     fi
@@ -102,6 +102,7 @@ while IFS= read -r file; do
         printf '%s\n' "$file" >> "$identical_list"
     else
         printf '%s\n' "$file" >> "$different_list"
+        printf '%s\t%s\n' "$file" "$target_copy" >> "$different_pairs"
     fi
 done < "$overlap_list"
 
@@ -135,11 +136,10 @@ fi
 
 if [[ "$show_diff" == true && -s "$different_list" ]]; then
     echo ""
-    while IFS= read -r file; do
-        [[ -z "$file" ]] && continue
-        target_copy="$tmpdir/target.$(printf '%s' "$file" | tr '/ ' '__')"
+    while IFS=$'\t' read -r file target_copy; do
+        [[ -z "$file" || -z "$target_copy" ]] && continue
         echo "Diff for: $file"
         git diff --no-index -- "$file" "$target_copy" || true
         echo ""
-    done < "$different_list"
+    done < "$different_pairs"
 fi
