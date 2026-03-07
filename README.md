@@ -66,6 +66,7 @@ git wtf                          # Enhanced status
 ### 📊 **Diff & Comparison Tools**
 - **git-diff_with_prev** - Compare with previous version
 - **git-resolve-conflict** - Guided merge-conflict resolution with auto re-merge and review
+- **git-untracked-overwritten** - Classify untracked files that would block a merge/pull
 - **git-diff-branch** - Compare branches with enhanced output
 - **git-diff-changed_files** - Show only changed file names
 - **git-diff-theirs_combined** - Show their changes in merge conflicts
@@ -208,6 +209,20 @@ git resolve-conflict --find path/to/file -- --since='2025-01-01'
 - `likely_clean` - analyzed files looked clean
 - `status_unknown(non_comparable_only)` - no files were analyzable for that merge commit
 
+### Untracked Merge Blockers with `git-untracked-overwritten`
+```bash
+# Compare untracked files in your working tree against files tracked in the target ref
+git untracked-overwritten origin/main
+
+# Also show inline diffs for files that differ
+git untracked-overwritten origin/main --diff
+```
+
+Output buckets:
+- `Identical (safe to delete)` - local untracked file is byte-identical to target ref
+- `Different (review before merge)` - local file differs from target ref version
+
+> Checks exact path overlaps only (does not detect file/directory prefix collisions).
 
 ### Historical Analysis
 ```bash
@@ -342,6 +357,7 @@ Some scripts work better together:
 - git-stash-smart
 - git-status-date
 - git-undo
+- git-untracked-overwritten
 - git-up
 - git-when-reached-branch
 - git-wtf
