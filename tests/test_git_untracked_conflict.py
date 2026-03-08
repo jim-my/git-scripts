@@ -207,6 +207,23 @@ def test_detects_gitignored_untracked_files_that_would_be_overwritten(tmp_path):
     assert "  - config.dxt" in result.stdout
 
 
+def test_detects_dangling_symlink_that_would_be_overwritten(tmp_path):
+    """A dangling symlink at a path tracked in the target ref is detected.
+
+    git merge uses lstat() so it sees the symlink inode even when the target
+    is missing; [[ -e ]] follows symlinks and misses them.
+    """
+    repo = init_repo(tmp_path)
+
+    # Replace the untracked 'same.txt' with a dangling symlink
+    (repo / "same.txt").unlink()
+    (repo / "same.txt").symlink_to("nonexistent_target")
+
+    result = run([str(SCRIPT_PATH), "feature"], cwd=repo)
+
+    assert "  - same.txt" in result.stdout
+
+
 def test_diff_labels_show_ref_not_tmpdir_path(tmp_path):
     """--diff output labels use 'local:<file>' and '<ref>:<file>', not tmpdir paths."""
     repo = init_repo(tmp_path)

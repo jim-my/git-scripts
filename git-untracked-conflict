@@ -87,7 +87,7 @@ git ls-files | LC_ALL=C sort -u > "$tracked_list"
 comm -23 "$target_list" "$tracked_list" > "$in_target_not_tracked"
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
-    if [[ -e "$file" ]]; then
+    if [[ -e "$file" || -L "$file" ]]; then
         printf '%s\n' "$file"
     fi
 done < "$in_target_not_tracked" > "$overlap_list"
