@@ -128,7 +128,7 @@ def test_no_untracked_files(tmp_path):
     result = run([str(SCRIPT_PATH), "feature"], cwd=repo)
 
     assert result.returncode == 0
-    assert "No untracked files found." in result.stdout
+    assert "No untracked files would be overwritten" in result.stdout
 
 
 def test_no_overlap_with_target_ref(tmp_path):
@@ -175,6 +175,36 @@ def test_detects_overlap_when_invoked_from_subdirectory(tmp_path):
 
     assert "  - same.txt" in result.stdout
     assert "  - different.txt" in result.stdout
+
+
+def test_detects_gitignored_untracked_files_that_would_be_overwritten(tmp_path):
+    """Files that are gitignored locally but tracked in the target ref are detected."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.name", "Test User"], cwd=repo)
+    run(["git", "config", "user.email", "test@example.com"], cwd=repo)
+    initial_branch = run(["git", "symbolic-ref", "--short", "HEAD"], cwd=repo).stdout.strip()
+
+    # Base commit with .gitignore that ignores *.dxt
+    (repo / ".gitignore").write_text("*.dxt\n", encoding="utf-8")
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    run(["git", "add", ".gitignore", "base.txt"], cwd=repo)
+    run(["git", "commit", "-qm", "base"], cwd=repo)
+
+    # Feature branch force-adds a .dxt file (tracked despite .gitignore)
+    run(["git", "checkout", "-qb", "feature"], cwd=repo)
+    (repo / "config.dxt").write_text("dxt content in target\n", encoding="utf-8")
+    run(["git", "add", "-f", "config.dxt"], cwd=repo)
+    run(["git", "commit", "-qm", "add dxt file"], cwd=repo)
+
+    # Back on main: the .dxt file exists in the working tree but is gitignored/untracked
+    run(["git", "checkout", "-q", initial_branch], cwd=repo)
+    (repo / "config.dxt").write_text("local dxt content\n", encoding="utf-8")
+
+    result = run([str(SCRIPT_PATH), "feature"], cwd=repo)
+
+    assert "  - config.dxt" in result.stdout
 
 
 def test_diff_labels_show_ref_not_tmpdir_path(tmp_path):
