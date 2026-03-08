@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     cat << 'EOF'
-Usage: git-untracked-overwritten <ref> [--diff]
+Usage: git-untracked-conflict <ref> [--diff]
 
 Find untracked working-tree files that are tracked in <ref>, then classify:
   - identical files (safe to delete)
@@ -71,24 +71,26 @@ fi
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-untracked_list="$tmpdir/untracked.txt"
 target_list="$tmpdir/target.txt"
+tracked_list="$tmpdir/tracked.txt"
+in_target_not_tracked="$tmpdir/in_target_not_tracked.txt"
 overlap_list="$tmpdir/overlap.txt"
 identical_list="$tmpdir/identical.txt"
 different_list="$tmpdir/different.txt"
 different_pairs="$tmpdir/different_pairs.tsv"
 
-git ls-files --others --exclude-standard > "$untracked_list"
-if [[ ! -s "$untracked_list" ]]; then
-    echo "No untracked files found."
-    exit 0
-fi
+git ls-tree -r --name-only "$target_ref" | LC_ALL=C sort -u > "$target_list"
+git ls-files | LC_ALL=C sort -u > "$tracked_list"
 
-git ls-tree -r --name-only "$target_ref" > "$target_list"
-
-LC_ALL=C sort -u "$untracked_list" > "$untracked_list.sorted"
-LC_ALL=C sort -u "$target_list" > "$target_list.sorted"
-comm -12 "$untracked_list.sorted" "$target_list.sorted" > "$overlap_list"
+# Files in target ref that are not tracked in the current index might overwrite
+# working tree files on merge — detect them regardless of .gitignore status.
+comm -23 "$target_list" "$tracked_list" > "$in_target_not_tracked"
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    if [[ -e "$file" || -L "$file" ]]; then
+        printf '%s\n' "$file"
+    fi
+done < "$in_target_not_tracked" > "$overlap_list"
 
 if [[ ! -s "$overlap_list" ]]; then
     echo "No untracked files would be overwritten by '$target_ref'."
