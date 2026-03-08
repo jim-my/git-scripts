@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     cat << 'EOF'
-Usage: git-untracked-overwritten <ref> [--diff]
+Usage: git-untracked-conflict <ref> [--diff]
 
 Find untracked working-tree files that are tracked in <ref>, then classify:
   - identical files (safe to delete)

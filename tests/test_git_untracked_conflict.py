@@ -1,11 +1,11 @@
-"""Integration tests for git-untracked-overwritten."""
+"""Integration tests for git-untracked-conflict."""
 
 import subprocess
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "git-untracked-overwritten"
+SCRIPT_PATH = REPO_ROOT / "git-untracked-conflict"
 
 
 def run(cmd, cwd, check=True):
