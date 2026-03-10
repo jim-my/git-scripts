@@ -12,7 +12,6 @@
 
 ## Background: how git-wtf works
 
-- `git-wtf` is at `/Users/jimmyyan/work/02-git-scripts/git-wtf` (no `.py` extension)
 - Tests are at `tests/test_git_wtf.py`
 - `parse_args()` reads directly from `sys.argv`; strips known flags, collects remaining args as `targets`
 - `main()` builds `all_branches` (a dict of branch name → branch info dict), resolves targets, calls `show_branch_status(branch_info)` per target
@@ -88,7 +87,7 @@ class TestUpstreamArgParsing(unittest.TestCase):
 ### Step 2: Run tests to verify they fail
 
 ```bash
-cd /Users/jimmyyan/work/02-git-scripts
+cd $(git rev-parse --show-toplevel)
 python -m pytest tests/test_git_wtf.py::TestUpstreamArgParsing -v
 ```
 
@@ -324,7 +323,7 @@ Replace with:
 ### Step 2: Verify USAGE renders correctly
 
 ```bash
-cd /Users/jimmyyan/work/02-git-scripts
+cd $(git rev-parse --show-toplevel)
 ./git-wtf --help | grep -A2 upstream
 ```
 
@@ -348,7 +347,7 @@ git commit -m "docs(git-wtf): document --upstream/-u flag in USAGE"
 ### Step 1: Run full test suite one more time
 
 ```bash
-cd /Users/jimmyyan/work/02-git-scripts
+cd $(git rev-parse --show-toplevel)
 python -m pytest tests/test_git_wtf.py -v
 ```
 
@@ -357,7 +356,7 @@ Expected: all tests pass, no failures.
 ### Step 2: Smoke test with real git repo
 
 ```bash
-cd /Users/jimmyyan/work/02-git-scripts
+cd $(git rev-parse --show-toplevel)
 ./git-wtf --upstream main
 ```
 

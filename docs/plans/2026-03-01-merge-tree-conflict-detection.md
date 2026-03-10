@@ -82,7 +82,7 @@ def test_merge_tree_detects_identical_net_change_as_clean(tmp_path):
 **Step 2: Run test to verify it fails**
 
 ```bash
-cd /Users/jimmyyan/work/02-git-scripts
+cd $(git rev-parse --show-toplevel)
 pytest test_git_diff_123.py::test_merge_tree_detects_identical_net_change_as_clean -v
 ```
 
