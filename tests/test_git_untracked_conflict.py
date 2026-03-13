@@ -234,3 +234,52 @@ def test_diff_labels_show_ref_not_tmpdir_path(tmp_path):
     assert "target.XXXXXX" not in result.stdout
     assert "local:different.txt" in result.stdout
     assert "feature:different.txt" in result.stdout
+
+
+def test_delete_identical_with_yes_removes_only_identical_files(tmp_path):
+    """--delete-identical --yes deletes identical files but keeps different files."""
+    repo = init_repo(tmp_path)
+
+    result = run([str(SCRIPT_PATH), "feature", "--delete-identical", "--yes"], cwd=repo)
+
+    assert result.returncode == 0
+    assert "Deleted identical files:" in result.stdout
+    assert "  - same.txt" in result.stdout
+    assert not (repo / "same.txt").exists()
+    assert (repo / "different.txt").exists()
+
+
+def test_delete_identical_without_yes_in_noninteractive_mode_errors(tmp_path):
+    """--delete-identical requires --yes in non-interactive mode."""
+    repo = init_repo(tmp_path)
+
+    result = run([str(SCRIPT_PATH), "feature", "--delete-identical"], cwd=repo, check=False)
+
+    assert result.returncode == 1
+    assert "Error: --delete-identical requires --yes in non-interactive mode" in result.stderr
+
+
+def test_delete_identical_with_no_identical_files_reports_message(tmp_path):
+    """--delete-identical reports when there are no identical files to remove."""
+    repo = init_repo(tmp_path)
+    (repo / "same.txt").unlink()
+
+    result = run([str(SCRIPT_PATH), "feature", "--delete-identical", "--yes"], cwd=repo)
+
+    assert result.returncode == 0
+    assert "No identical files to delete." in result.stdout
+    assert (repo / "different.txt").exists()
+
+
+def test_yes_without_delete_identical_warns_and_continues(tmp_path):
+    """--yes alone emits a warning because it has no effect without deletion."""
+    repo = init_repo(tmp_path)
+
+    result = run([str(SCRIPT_PATH), "feature", "--yes"], cwd=repo)
+
+    assert result.returncode == 0
+    assert "Warning: --yes has no effect without --delete-identical" in result.stderr
+
+
+# Interactive confirmation branches for --delete-identical (accept/decline) are
+# intentionally not covered here because this suite runs without a PTY.

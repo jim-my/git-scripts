@@ -212,15 +212,25 @@ git resolve-conflict --find path/to/file -- --since='2025-01-01'
 ### Untracked Merge Blockers with `git-untracked-conflict`
 ```bash
 # Compare untracked files in your working tree against files tracked in the target ref
-git untracked-overwritten origin/main
+git untracked-conflict origin/main
 
 # Also show inline diffs for files that differ
-git untracked-overwritten origin/main --diff
+git untracked-conflict origin/main --diff
+
+# Delete only the files classified as identical (interactive confirmation)
+git untracked-conflict origin/main --delete-identical
+
+# Non-interactive deletion (e.g. scripts/CI)
+git untracked-conflict origin/main --delete-identical --yes
 ```
 
 Output buckets:
 - `Identical (safe to delete)` - local untracked file is byte-identical to target ref
 - `Different (review before merge)` - local file differs from target ref version
+
+`--delete-identical` safety:
+- Interactive terminals prompt before deleting.
+- Non-interactive runs require `--yes` or the command exits with an error.
 
 > Checks exact path overlaps only (does not detect file/directory prefix collisions).
 

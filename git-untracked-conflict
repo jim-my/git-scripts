@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     cat << 'EOF'
-Usage: git-untracked-conflict <ref> [--diff]
+Usage: git-untracked-conflict <ref> [options]
 
 Find untracked working-tree files that are tracked in <ref>, then classify:
   - identical files (safe to delete)
@@ -13,6 +13,8 @@ Note: checks exact path overlaps only (does not detect file/directory prefix col
 
 Options:
   --diff   Print inline diffs for files in the "different" bucket
+  --delete-identical  Delete files in the "Identical" bucket after confirmation
+  --yes    Skip confirmation prompt (required in non-interactive mode with --delete-identical)
   -h, --help  Show this help
 EOF
 }
@@ -36,11 +38,19 @@ cd "$(git rev-parse --show-toplevel)"
 
 target_ref=""
 show_diff=false
+delete_identical=false
+assume_yes=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --diff)
             show_diff=true
+            ;;
+        --delete-identical)
+            delete_identical=true
+            ;;
+        --yes)
+            assume_yes=true
             ;;
         -h|--help)
             usage
@@ -62,6 +72,10 @@ done
 
 if [[ -z "$target_ref" ]]; then
     error_exit "ref is required"
+fi
+
+if [[ "$assume_yes" == true && "$delete_identical" == false ]]; then
+    echo "Warning: --yes has no effect without --delete-identical" >&2
 fi
 
 if ! git rev-parse --verify "${target_ref}^{commit}" >/dev/null 2>&1; then
@@ -139,6 +153,39 @@ else
         [[ -z "$file" ]] && continue
         echo "  - $file"
     done < "$different_list"
+fi
+
+if [[ "$delete_identical" == true ]]; then
+    if [[ ! -s "$identical_list" ]]; then
+        echo ""
+        echo "No identical files to delete."
+    else
+        should_delete=false
+        if [[ "$assume_yes" == true ]]; then
+            should_delete=true
+        elif [[ -t 0 ]]; then
+            echo ""
+            read -r -p "Delete identical files listed above? [y/N] " answer
+            case "$answer" in
+                y|Y|yes|YES)
+                    should_delete=true
+                    ;;
+                *) ;;
+            esac
+        else
+            error_exit "--delete-identical requires --yes in non-interactive mode"
+        fi
+
+        if [[ "$should_delete" == true ]]; then
+            echo ""
+            echo "Deleted identical files:"
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                rm -f -- "$file"
+                echo "  - $file"
+            done < "$identical_list"
+        fi
+    fi
 fi
 
 if [[ "$show_diff" == true && -s "$different_list" ]]; then
